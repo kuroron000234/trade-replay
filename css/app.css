@@ -228,3 +228,43 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
   .rb-btn span { display: none; }
   .sep, .clock { display: none; }
 }
+
+/* トレード記録 */
+.groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1px; background: var(--border); }
+.group { background: var(--bg); padding: 6px 0 8px; }
+.group h5 { margin: 2px 10px 4px; font-size: 12px; color: var(--sub); font-weight: 600; }
+.group .tbl td, .group .tbl th { padding: 3px 10px; }
+.barcell { width: 70px; }
+.barcell i { display: block; height: 8px; border-radius: 2px; }
+.barcell i.pos { background: var(--up); } .barcell i.neg { background: var(--dn); }
+.note-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.trade-detail { display: flex; flex-direction: column; gap: 10px; }
+.ctx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 14px; }
+.kv2 { display: flex; flex-direction: column; font-size: 11px; color: var(--sub); }
+.kv2 b { color: var(--text); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ctx h5 { margin: 4px 0 6px; font-size: 12px; color: var(--sub); border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.ops { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.note-in, .trade-detail input[type=text] { width: 100%; resize: vertical; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--sub); }
+.chip:hover { color: var(--text); border-color: var(--blue); }
+
+/* AI コーチ */
+.coach-head, .coach-quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.coach-quick .muted { font-size: 11px; }
+.key-in { width: 200px; padding: 3px 6px; }
+.coach-log { flex: 1; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 860px; line-height: 1.6; font-size: 13px; }
+.msg.user { align-self: flex-end; background: rgba(41,98,255,.15); border: 1px solid rgba(41,98,255,.35); padding: 6px 10px; border-radius: 8px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.msg.assistant { background: var(--panel); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; }
+.msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 10px 0 4px; font-size: 14px; }
+.msg.assistant p { margin: 4px 0; }
+.msg.assistant ul, .msg.assistant ol { margin: 4px 0; padding-left: 20px; }
+.msg.assistant pre { background: #0f121a; padding: 8px; border-radius: 4px; overflow: auto; font-size: 12px; }
+.msg.assistant code { background: #0f121a; padding: 0 4px; border-radius: 3px; }
+.thinking { color: var(--sub); animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .4; } }
+.usage { color: var(--sub); font-size: 11px; margin-top: 6px; }
+.coach-foot { display: flex; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); flex: none; align-items: flex-end; }
+.coach-in { flex: 1; resize: none; }
+.bottom-head .tabs { overflow-x: auto; scrollbar-width: none; }

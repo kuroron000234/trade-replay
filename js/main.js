@@ -9,6 +9,9 @@ import { INDICATORS } from './indicators.js';
 import { compile, StrategyRunner, Backtest, PRESETS } from './strategy.js';
 import { modal, menu, closeMenu, form, tabs, SVG, modalOpen } from './ui.js';
 import { TradingPanel, TesterPanel, EditorPanel, Ticket } from './panels.js';
+import { Recorder } from './journal.js';
+import { JournalPanel } from './journal-ui.js';
+import { Coach } from './coach.js';
 
 const DEFAULTS = {
   crypto: { balance: 10000, leverage: 10, fee: 0.05, stopOut: 50 },
@@ -41,6 +44,7 @@ class App {
     this.showStratOnChart = store.get('showStrat', true);
     this.fillsKey = '';
     this.pickMode = false;
+    this.recorder = new Recorder(this);
   }
 
   // ---------- 状態 ----------
@@ -84,7 +88,7 @@ class App {
       last = now;
       try { this.frame(dt, now); } catch (e) { console.error(e); }
       if (now - lastUI > 200) { lastUI = now; this.refreshUI(); }
-      if (now - lastSave > 5000) { lastSave = now; this.saveSession(); }
+      if (now - lastSave > 5000) { lastSave = now; this.saveSession(); this.recorder.saveSession(); }
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
@@ -152,6 +156,7 @@ class App {
     this.cv.setTFLabel(tfInfo(tf).label);
     document.querySelectorAll('.tf-btn').forEach((b) => b.classList.toggle('on', +b.dataset.tf === tf));
     $('#tfMore').textContent = [60, 300, 900, 3600, 14400, 86400].includes(tf) ? '▾' : tfInfo(tf).short + ' ▾';
+    this.recorder.op('tf', { tf }, 'app');
     try { await this.replay.setTF(tf); } catch (e) { toast(e.message, 'err'); }
   }
 
@@ -170,7 +175,11 @@ class App {
     r.on('started', () => {
       this.manual = new Account(this.sym, this.accountCfg(), '手動');
       this.manual.bid = r.lastPrice; this.manual.t = r.T;
+      const resumeId = this.pendingRestore ? this.pendingSessionId : null;
       if (this.pendingRestore) { this.manual.restore(this.pendingRestore); this.manual.bid = r.lastPrice; this.pendingRestore = null; }
+      if (this.recorder.session) this.recorder.endSession();
+      this.recorder.startSession(resumeId);
+      this.recorder.attach(this.manual, 'manual');
       this.auto = null;
       if (this.autoOn) this.createAuto();
       r.accounts = [this.manual, this.auto].filter(Boolean);
@@ -218,6 +227,7 @@ class App {
   async endReplay(silent) {
     if (!silent && this.manual?.trades.length && !confirm('リプレイを終了しますか？（口座の記録は消えます）')) return;
     this.replay.stop();
+    this.recorder.endSession();
     this.manual = null; this.auto = null;
     this.replay.accounts = [];
     store.set('session', null);
@@ -229,9 +239,10 @@ class App {
     if (!this.inReplay()) { this.enterPick(); return; }
     if (r.ended) { toast('データの最後です'); return; }
     r.playing = !r.playing;
+    this.recorder.playState(r.playing);
     this.updateReplayBar();
   }
-  stepOne() { if (this.inReplay()) { this.replay.playing = false; this.replay.step(); this.updateReplayBar(); } }
+  stepOne() { if (this.inReplay()) { if (this.replay.playing) this.recorder.playState(false); this.replay.playing = false; this.recorder.op('step', { tf: this.replay.tf }, 'app'); this.replay.step(); this.updateReplayBar(); } }
   async randomStart() {
     const rg = this.replay.range || (await sourceFor(this.sym).range(this.sym));
     if (!rg) return;
@@ -306,6 +317,8 @@ class App {
     if (!this.strat?.compiled) { toast('ストラテジーにエラーがあります', 'err'); return; }
     this.auto = new Account(this.sym, this.accountCfg(), '自動売買');
     this.auto.bid = this.replay.lastPrice; this.auto.t = this.replay.T;
+    this.recorder.attach(this.auto, 'auto');
+    this.recorder.op('auto_on', { strategy: this.strat.compiled.name, inputs: this.stratInputs() }, 'app');
     this.makeLiveRunner();
   }
   makeLiveRunner() {
@@ -354,6 +367,7 @@ class App {
   // ---------- 売買 ----------
   marketOrder(side, qty, br = {}) {
     if (!this.canTrade()) { toast('リプレイ中のみ取引できます', 'err'); return; }
+    this.recorder.op('order_market', { side, qty, sl: br.sl ?? null, tp: br.tp ?? null });
     const err = this.manual.market(side, qty, { sl: br.sl, tp: br.tp, reason: side > 0 ? '成行買い' : '成行売り' });
     if (err) toast(err, 'err');
   }
@@ -370,18 +384,20 @@ class App {
     const a = this.manual; if (!a?.pos.qty) return;
     const step = this.sym.qtyStep;
     const q = frac >= 1 ? Math.abs(a.pos.qty) : Math.max(step, Math.round((Math.abs(a.pos.qty) * frac) / step) * step);
+    this.recorder.op('close', { qty: q, of: Math.abs(a.pos.qty) });
     a.closePosition('手動決済', q);
   }
-  closeAllManual() { this.manual?.closeAll('全決済'); }
+  closeAllManual() { this.recorder.op('close_all', {}); this.manual?.closeAll('全決済'); }
   reverse() {
     const a = this.manual; if (!a?.pos.qty) return;
+    this.recorder.op('reverse', { qty: Math.abs(a.pos.qty) });
     const err = a.market(-Math.sign(a.pos.qty), Math.abs(a.pos.qty) * 2, { reason: 'ドテン' });
     if (err) toast(err, 'err');
   }
 
   bindOverlay() {
     const ov = this.ov;
-    ov.on('changed', (list) => store.set('draw.' + this.sym.id, list));
+    ov.on('changed', (list) => { store.set('draw.' + this.sym.id, list); this.recorder.op('drawings', { count: list.length, types: list.map((d) => d.type).join(',') }, 'app'); });
     ov.on('tool', (t) => document.querySelectorAll('#tools .tool').forEach((b) => b.classList.toggle('on', b.dataset.tool === t)));
     ov.on('pickStart', (t) => this.startReplay(alignTF(t, this.tf, this.off()) + this.tf));
     ov.on('pickCancel', () => this.cancelPick());
@@ -448,7 +464,7 @@ class App {
   // ---------- 前回の続き ----------
   saveSession() {
     if (!this.inReplay() || !this.manual) return;
-    store.set('session', { sym: this.sym.id, tf: this.replay.tf, T: this.replay.T, speed: this.replay.speed, manual: this.manual.snapshot(), at: Date.now() });
+    store.set('session', { sessionId: this.recorder.session?.id, sym: this.sym.id, tf: this.replay.tf, T: this.replay.T, speed: this.replay.speed, manual: this.manual.snapshot(), at: Date.now() });
   }
   offerResume() {
     const s = store.get('session', null);
@@ -463,6 +479,7 @@ class App {
     if (s.sym !== this.sym.id) { this.sym = symbolInfo(s.sym); store.set('sym', s.sym); this.applySymbolUI(); await this.loadIdle(); }
     if (s.tf !== this.tf) { this.tf = s.tf; store.set('tf', s.tf); this.applySymbolUI(); }
     this.pendingRestore = s.manual;
+    this.pendingSessionId = s.sessionId;
     await this.startReplay(s.T);
   }
 
@@ -499,19 +516,23 @@ class App {
   buildBottom() {
     const b = $('#bottom');
     const body = el('div', { class: 'bottom-body' });
-    const panes = [el('div', { class: 'bpane' }), el('div', { class: 'bpane', hidden: true }), el('div', { class: 'bpane', hidden: true })];
+    const panes = [0, 1, 2, 3, 4].map((i) => el('div', { class: 'bpane', hidden: i > 0 }));
     body.append(...panes);
-    this.bottomTabs = tabs(['取引パネル', 'ストラテジーテスター', 'ストラテジーエディター'], (i) => {
+    this.bottomTabs = tabs(['取引パネル', 'ストラテジーテスター', 'ストラテジーエディター', 'トレード記録', 'AI コーチ'], (i) => {
       panes.forEach((p, k) => (p.hidden = k !== i));
       b.classList.remove('collapsed');
       store.set('bottomTab', i);
       if (i === 1) this.tester.render();
+      this.journal.visible = i === 3;
+      if (i === 3) this.journal.render();
     });
     const collapse = el('button', { class: 'tb', title: 'パネルを開閉', onclick: () => { b.classList.toggle('collapsed'); store.set('bottomCollapsed', b.classList.contains('collapsed')); } }, '▾');
     b.append(el('div', { class: 'bottom-head' }, this.bottomTabs, el('div', { class: 'grow' }), collapse), body);
     this.trading = new TradingPanel(panes[0], this);
     this.tester = new TesterPanel(panes[1], this);
     this.editor = new EditorPanel(panes[2], this);
+    this.journal = new JournalPanel(panes[3], this);
+    this.coach = new Coach(panes[4], this);
     this.bottomTabs.select(store.get('bottomTab', 0));
     if (store.get('bottomCollapsed', false)) b.classList.add('collapsed');
     b.style.height = store.get('bottomH', 260) + 'px';
@@ -550,7 +571,7 @@ class App {
           el('button', { class: 'rb-btn', title: 'ランダムな日時', html: SVG.dice + '<span>ランダム</span>', onclick: () => this.randomStart() }),
           el('button', { class: 'rb-btn', onclick: () => this.cancelPick() }, 'キャンセル'));
       } else if (this.inReplay()) {
-        const sp = el('select', { class: 'rb-speed', title: '再生速度', onchange: (e) => { r.speed = +e.target.value; store.set('speed', r.speed); } }, ...SPEEDS.map((s) => el('option', { value: s.v, selected: s.v === r.speed }, s.label)));
+        const sp = el('select', { class: 'rb-speed', title: '再生速度', onchange: (e) => { r.speed = +e.target.value; store.set('speed', r.speed); this.recorder.op('speed', { speed: r.speed }, 'app'); } }, ...SPEEDS.map((s) => el('option', { value: s.v, selected: s.v === r.speed }, s.label)));
         rb.append(
           el('button', { class: 'rb-btn', title: '開始位置を選び直す', html: SVG.replay, onclick: () => this.enterPick() }),
           el('button', { class: 'rb-btn play', title: '再生 / 一時停止（Shift+↓ または Space）', html: r.playing ? SVG.pause : SVG.play, onclick: () => this.togglePlay() }),
