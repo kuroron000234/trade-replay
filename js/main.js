@@ -138,6 +138,8 @@ class App {
       try { await sourceFor(sym).loadTF(sym, 86400, Math.floor(Date.now() / 1000), 1); } catch (e) { toast(e.message, 'err'); return; }
     }
     const wasReplay = this.inReplay(), T = this.replay.T;
+    // 先に確認する（リプレイを止めた後でキャンセルされると、口座だけ残った中途半端な状態になる）
+    if (wasReplay && this.manual?.trades.length && !confirm('銘柄を切り替えると、今の口座はリセットされます。よろしいですか？')) return;
     this.sym = sym;
     store.set('sym', sym.id);
     this.applySymbolUI();
@@ -145,7 +147,10 @@ class App {
       this.replay.stop();
       await this.loadIdle();
       const rg = this.replay.range;
-      if (rg && T > rg.min && T < rg.max) await this.startReplay(T);
+      if (rg && T > rg.min && T < rg.max) {
+        await this.startReplay(T, true);
+        if (!this.inReplay()) this.endReplay(true); // 開始できなかったら古い口座を残さない
+      }
       else { toast('この銘柄にはその日時のデータがないため、リプレイを終了しました'); this.endReplay(true); }
     } else await this.loadIdle();
   }
@@ -209,7 +214,7 @@ class App {
     this.updateReplayBar();
   }
   cancelPick() { this.pickMode = false; this.ov.pickMode = false; this.updateReplayBar(); }
-  async startReplay(T0) {
+  async startReplay(T0, confirmed = false) {
     this.cancelPick();
     const rg = this.replay.range;
     if (rg) {
@@ -217,7 +222,7 @@ class App {
       if (T0 < rg.min) T0 = rg.min + 3600;
     }
     T0 = Math.floor(T0 / 60) * 60;
-    if (this.manual?.trades.length && !this.pendingRestore && !confirm('新しいリプレイを始めると、今の口座はリセットされます。よろしいですか？')) return;
+    if (!confirmed && this.manual?.trades.length && !this.pendingRestore && !confirm('新しいリプレイを始めると、今の口座はリセットされます。よろしいですか？')) return;
     try {
       await this.replay.start(T0, this.sym, this.tf);
       toast(`${fmtTime(T0)} からリプレイを開始しました。▶ または Shift+↓ で再生`);
@@ -237,7 +242,7 @@ class App {
   togglePlay() {
     const r = this.replay;
     if (!this.inReplay()) { this.enterPick(); return; }
-    if (r.ended) { toast('データの最後です'); return; }
+    if (r.finished && !r.playing) { toast('データの最後です'); return; }
     r.playing = !r.playing;
     this.recorder.playState(r.playing);
     this.updateReplayBar();
@@ -569,7 +574,7 @@ class App {
   }
   updateReplayBar() {
     const r = this.replay, rb = this.rb;
-    const state = this.pickMode ? 'pick' : this.inReplay() ? 'replay:' + r.playing + ':' + r.speed + ':' + r.ended : 'idle';
+    const state = this.pickMode ? 'pick' : this.inReplay() ? 'replay:' + r.playing + ':' + r.speed + ':' + r.finished : 'idle';
     $('#replayBtn').classList.toggle('on', this.pickMode || this.inReplay());
     $('#clock').textContent = this.inReplay() ? `▶ ${fmtTime(r.T, true)} ${TZ.name}` : '';
     if (state !== this.rbState) {
@@ -592,7 +597,7 @@ class App {
           el('button', { class: 'rb-btn', title: 'リプレイを終了', html: SVG.stop, onclick: () => this.endReplay() }));
       }
     }
-    if (this.inReplay() && this.rbTime) this.rbTime.textContent = r.ended ? 'データの最後' : r.loading && r.needData ? '読み込み中…' : fmtTime(r.T, true);
+    if (this.inReplay() && this.rbTime) this.rbTime.textContent = r.finished ? 'データの最後' : r.loading && r.needData ? '読み込み中…' : fmtTime(r.T, true);
   }
 
   // ---------- ダイアログ ----------

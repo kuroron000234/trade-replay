@@ -136,7 +136,14 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // 事前確認（OPTIONS）が必要になり、このサーバーはそれを許可しない
 func guard(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions || r.Header.Get("X-Trade-Replay") != "1" {
+		// DNS リバインディング対策: 別サイトのドメインを 127.0.0.1 に向けられると同一オリジン扱いになり
+		// 独自ヘッダーも付けられるので、Host がこのマシン自身のときだけ受け付ける
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		local := host == "127.0.0.1" || host == "localhost" || host == "::1"
+		if !local || r.Method == http.MethodOptions || r.Header.Get("X-Trade-Replay") != "1" {
 			writeJSON(w, 403, map[string]any{"error": "forbidden"})
 			return
 		}

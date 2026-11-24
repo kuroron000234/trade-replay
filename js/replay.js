@@ -70,16 +70,19 @@ export class Replay extends Emitter {
   // T0: この時刻の直前までが見えている状態から始める
   async start(T0, sym = this.sym, tf = this.tf) {
     const tok = ++this.token;
-    this.sym = sym; this.tf = tf; this.mode = 'replay'; this.playing = false; this.ended = false; this.noOlder = false;
+    this.playing = false;
     this.emit('loading', true);
     try {
-      const anchor = this.bucket(T0);
+      // 読み込みに成功するまで状態（mode / sym / tf）は変えない。失敗したときに中途半端なリプレイ状態が残らないように
+      const anchor = alignTF(T0, tf, dayOffset(sym));
+      const src = sourceFor(sym);
       const [hist, M] = await Promise.all([
-        this.src.loadTF(sym, tf, anchor, HIST),
-        this.src.load1m(sym, anchor, Math.max(T0, anchor) + (sym.type === 'fx' ? 7 : 2) * DAY),
+        src.loadTF(sym, tf, anchor, HIST),
+        src.load1m(sym, anchor, Math.max(T0, anchor) + (sym.type === 'fx' ? 7 : 2) * DAY),
       ]);
       if (tok !== this.token) return;
       if (!M.length || M[M.length - 1].t < T0) throw new Error('この日時以降のデータがありません');
+      this.sym = sym; this.tf = tf; this.mode = 'replay'; this.ended = false; this.noOlder = false;
       this.startT = T0;
       this.M = M;
       this.T = T0;
@@ -306,6 +309,9 @@ export class Replay extends Emitter {
       this.loading = false;
     }
   }
+
+  // ended は「これ以上読み込むデータがない」だけ。読み込み済みの足を再生し切ったら finished
+  get finished() { return this.ended && this.mi >= this.M.length; }
 
   stop() {
     this.token++;
