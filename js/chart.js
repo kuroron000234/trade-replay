@@ -187,7 +187,7 @@ export class ChartView extends Emitter {
     if (!def.overlay) pane = this.chart.panes().length;
     def.plots.forEach((p, k) => {
       const st = ind.styles[k];
-      const base = { lastValueVisible: !def.volume && st.visible, priceLineVisible: false, visible: ind.visible && st.visible, title: '', crosshairMarkerVisible: p.type !== 'hist' };
+      const base = { lastValueVisible: !def.volume && st.visible && !(def.overlay && def.plots.length > 2), priceLineVisible: false, visible: ind.visible && st.visible, title: '', crosshairMarkerVisible: p.type !== 'hist' };
       if (!def.overlay || def.volume) base.priceFormat = def.volume ? { type: 'volume' } : { type: 'price', precision: def.precision ?? 2, minMove: 0.01 };
       if (def.overlay && !def.volume) base.priceFormat = { type: 'price', precision: this.digits, minMove: 10 ** -this.digits };
       let s;

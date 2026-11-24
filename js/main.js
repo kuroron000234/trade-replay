@@ -528,7 +528,8 @@ class App {
 
   buildReplayBar() {
     this.rb = el('div', { id: 'replayBar', class: 'replay-bar', hidden: true });
-    $('#chartWrap').append(this.rb,
+    $('#replayBtn').after(this.rb);
+    $('#chartWrap').append(
       el('button', { id: 'toRT', class: 'to-rt', title: '最新の足へ', hidden: true, html: SVG.realtime, onclick: () => this.cv.chart.timeScale().scrollToRealTime() }),
       el('div', { id: 'loading', class: 'loading', hidden: true }, el('div', { class: 'spin' })));
     this.rbState = '';

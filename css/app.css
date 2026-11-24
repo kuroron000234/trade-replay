@@ -68,13 +68,13 @@ input[type=checkbox] { accent-color: var(--blue); padding: 0; }
 .pane-legends .leg-row { position: absolute; left: 8px; z-index: 4; }
 
 /* リプレイバー */
-.replay-bar { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
-.rb-btn { height: 32px; min-width: 32px; padding: 0 8px; border-radius: 5px; display: inline-flex; align-items: center; gap: 6px; }
+.replay-bar { display: flex; align-items: center; gap: 2px; padding: 2px; margin-left: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.rb-btn { height: 28px; min-width: 28px; padding: 0 8px; border-radius: 5px; display: inline-flex; align-items: center; gap: 6px; }
 .rb-btn:hover { background: var(--hover); }
 .rb-btn.play { color: #fff; background: var(--blue); }
 .rb-btn.play:hover { background: #1e53e5; }
 .rb-msg { padding: 0 10px; color: var(--blue); font-weight: 600; }
-.rb-speed { height: 30px; padding: 2px 6px; margin: 0 4px; background: var(--bg); }
+.rb-speed { height: 26px; padding: 2px 6px; margin: 0 4px; background: var(--bg); }
 .rb-time { font-variant-numeric: tabular-nums; padding: 0 10px; min-width: 150px; text-align: center; color: var(--text); }
 .to-rt { position: absolute; right: 80px; bottom: 36px; z-index: 5; width: 28px; height: 28px; border-radius: 50%; background: var(--panel); border: 1px solid var(--border); display: grid; place-items: center; }
 .to-rt:hover { background: var(--hover); }
@@ -219,6 +219,7 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
   .tf-btn:nth-of-type(n+5) { display: none; }
   #tools { width: 40px; }
   .tool { width: 32px; height: 32px; }
-  .replay-bar { bottom: 34px; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center; }
-  .rb-time { min-width: 0; }
+  .rb-time { display: none; }
+  .rb-btn span { display: none; }
+  .sep, .clock { display: none; }
 }
