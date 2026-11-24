@@ -38,6 +38,7 @@ python3 tools/fetch.py ...       # FX データの取得（tools/run.sh を参�
 - `js/`: アプリ本体（チャート・リプレイ・口座・描画・ストラテジー・記録・AI トレーナー）
 - `desktop/`: Windows 版（Go）。サイトを exe に同梱して配信し、`claude -p` を中継し、セットアップを案内します
 - `tools/prompts.json`: AI トレーナーのシステムプロンプト（開発サーバーと Windows 版で共有）
+- GitHub Pages は main ブランチのルートをそのまま配信します
 - `v` で始まるタグを push すると、GitHub Actions が Windows 版をビルドしてリリースに載せます
 
 ## データとライセンス
