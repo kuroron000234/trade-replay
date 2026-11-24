@@ -160,6 +160,9 @@ input.inline { width: 100px; padding: 1px 4px; }
 .tk-row span { color: var(--sub); }
 .tk-in { width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
 .tk-qbtns { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 8px; }
+.tk-pct { display: flex; gap: 4px; align-items: center; justify-content: flex-end; margin: -2px 0 8px; }
+.tk-pct span { color: var(--sub); font-size: 11px; margin-right: auto; }
+.tk-pct .mini { padding: 2px 6px; }
 .tk-br { display: grid; grid-template-columns: 80px 1fr; gap: 2px 8px; align-items: center; margin: 6px 0; }
 .tk-br .tk-in { width: 100%; }
 .tk-br .tk-in:disabled { opacity: .4; }

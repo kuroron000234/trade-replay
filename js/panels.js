@@ -327,6 +327,8 @@ export class Ticket {
     this.priceRow = el('label', { class: 'tk-row' }, el('span', {}, '価格'), this.priceIn);
     this.qtyIn = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
     this.qtyBtns = el('div', { class: 'tk-qbtns' });
+    this.pctBtns = el('div', { class: 'tk-pct' }, el('span', {}, '資金の'),
+      ...[10, 25, 50, 75, 100].map((p) => el('button', { class: 'mini', title: `有効証拠金の ${p}% を証拠金に使う数量（取引金額 = 資金 × ${p}% × レバレッジ）`, onclick: () => this.pctQty(p / 100) }, p + '%')));
     this.slChk = el('input', { type: 'checkbox', onchange: (e) => { this.useSL = e.target.checked; this.defaultBracket('sl'); this.sync(); } });
     this.tpChk = el('input', { type: 'checkbox', onchange: (e) => { this.useTP = e.target.checked; this.defaultBracket('tp'); this.sync(); } });
     this.slIn = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
@@ -342,7 +344,7 @@ export class Ticket {
       this.symEl,
       el('div', { class: 'tk-sides' }, this.sellBtn, this.spreadEl, this.buyBtn),
       this.typeTabs, this.priceRow,
-      el('label', { class: 'tk-row' }, el('span', {}, '数量'), this.qtyIn), this.qtyBtns,
+      el('label', { class: 'tk-row' }, el('span', {}, '数量'), this.qtyIn), this.qtyBtns, this.pctBtns,
       el('div', { class: 'tk-br' }, el('label', { class: 'chk' }, this.tpChk, '利確'), this.tpIn, this.tpInfo),
       el('div', { class: 'tk-br' }, el('label', { class: 'chk' }, this.slChk, '損切り'), this.slIn, this.slInfo),
       this.infoEl, this.submit, this.hint, this.posBox);
@@ -356,7 +358,7 @@ export class Ticket {
     this.qtyBtns.innerHTML = '';
     const preset = sym.type === 'fx' ? [1000, 10000, 50000, 100000] : [sym.qty / 10, sym.qty, sym.qty * 5, sym.qty * 10];
     for (const q of preset) this.qtyBtns.append(el('button', { class: 'mini', onclick: () => { this.qtyIn.value = q; this.sync(true); } }, fmtNum(q, qtyDigits(sym))));
-    this.qtyBtns.append(el('button', { class: 'mini', title: 'リスク計算: 損切りまでの損失が口座の 1% になる数量', onclick: () => this.riskQty() }, '1%'));
+    this.qtyBtns.append(el('button', { class: 'mini', title: 'リスク計算: 損切りまでの損失が口座の 1% になる数量', onclick: () => this.riskQty() }, 'リスク1%'));
     this.useSL = this.useTP = false; this.slChk.checked = this.tpChk.checked = false;
     this.sync();
   }
@@ -372,6 +374,20 @@ export class Ticket {
     const dist = sym.pip ? sym.pip * 20 : e * 0.01;
     if (k === 'sl' && this.useSL && !this.slIn.value) this.slIn.value = this.fmtP(e - this.side * dist);
     if (k === 'tp' && this.useTP && !this.tpIn.value) this.tpIn.value = this.fmtP(e + this.side * dist * 2);
+  }
+  // 資金（有効証拠金）の p 割を証拠金に使う数量
+  pctQty(p) {
+    const a = this.app, acc = a.accounts().manual, e = this.entryPx();
+    if (e == null || !(e > 0)) { toast('価格がまだありません', 'err'); return; }
+    const cfg = acc?.cfg ?? a.accountCfg();
+    const equity = acc ? acc.equity() : cfg.balance;
+    // 100% のときはスプレッド・手数料で証拠金不足にならないよう少し余裕を持たせる
+    const safety = p >= 1 ? 0.99 - cfg.fee * cfg.leverage : 1;
+    const step = a.sym.qtyStep;
+    const q = Math.floor((equity * p * safety * cfg.leverage) / e / step) * step;
+    if (q < step) { toast('資金が足りず、最小数量に届きません', 'err'); return; }
+    this.qtyIn.value = q.toFixed(qtyDigits(a.sym));
+    this.sync(true);
   }
   riskQty() {
     const e = this.entryPx(), sl = +this.slIn.value, acc = this.app.accounts().manual;
@@ -400,7 +416,7 @@ export class Ticket {
     this.tpInfo.textContent = this.useTP && e && this.tpIn.value ? `${smoney(amt(+this.tpIn.value), sym)} ${sym.quote}（${dist(+this.tpIn.value)}）` : '';
     const acc = a.accounts().manual;
     const lev = acc?.cfg.leverage ?? a.accountCfg().leverage;
-    this.infoEl.innerHTML = e ? `<div><span>取引金額</span><b>${money(e * q, sym)} ${sym.quote}</b></div><div><span>必要証拠金</span><b>${money((e * q) / lev, sym)} ${sym.quote}</b></div>${sym.pip ? `<div><span>1pips あたり</span><b>${money(sym.pip * q, sym)} ${sym.quote}</b></div>` : ''}<div><span>レバレッジ</span><b>${lev} 倍</b></div>` : '';
+    this.infoEl.innerHTML = e ? `<div><span>取引金額</span><b>${money(e * q, sym)} ${sym.quote}</b></div><div><span>必要証拠金</span><b>${money((e * q) / lev, sym)} ${sym.quote}</b></div>${sym.pip ? `<div><span>1pips あたり</span><b>${money(sym.pip * q, sym)} ${sym.quote}</b></div>` : ''}<div><span>レバレッジ</span><b>${lev} 倍</b></div><div><span>資金に対する証拠金</span><b>${fmtNum(((e * q) / lev / (acc ? acc.equity() : a.accountCfg().balance)) * 100, 1)}%</b></div>` : '';
     const tname = { market: '成行', limit: '指値', stop: '逆指値' }[this.type];
     this.submit.className = 'tk-submit ' + (this.side > 0 ? 'buy' : 'sell');
     this.submit.disabled = !on;
