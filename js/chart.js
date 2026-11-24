@@ -281,8 +281,20 @@ export class ChartView extends Emitter {
   setStrategyPlots(plots) {
     // plots: Map(title -> {color, vals}) 。足の index で値を持つ
     this.stratSrc = plots;
-    for (const [title, s] of this.stratPlots) if (!plots?.has(title)) { this.chart.removeSeries(s); this.stratPlots.delete(title); }
+    // 別のストラテジー（または再計算）なら描き直す。値の桁で置くペインが変わることがある
+    const hadSub = [...this.stratPlots.values()].some((x) => x._sub);
+    for (const [, sr] of this.stratPlots) this.chart.removeSeries(sr);
+    this.stratPlots.clear();
+    if (hadSub) this.layoutPanes();
     this.updateStrategyPlots();
+  }
+  onPriceScale(vals) {
+    const xs = vals.filter((x) => Number.isFinite(x));
+    const cs = this.view.map((b) => b.c);
+    if (!xs.length || !cs.length) return true;
+    const med = (a) => { const b = [...a].sort((p, q) => p - q); return b[b.length >> 1]; };
+    const r = med(xs) / med(cs);
+    return r > 0.5 && r < 2;
   }
   updateStrategyPlots() {
     if (!this.stratSrc) return;
@@ -290,8 +302,17 @@ export class ChartView extends Emitter {
     for (const [title, pl] of this.stratSrc) {
       let s = this.stratPlots.get(title);
       if (!s) {
-        s = this.chart.addSeries(LineSeries, { color: pl.color, lineWidth: 1.5, lineStyle: LineStyle.Solid, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: this.digits, minMove: 10 ** -this.digits } }, 0);
+        // 値が価格と桁違い（RSI など）なら価格のペインに描かず、ストラテジー用の別ペインに描く
+        const sub = !this.onPriceScale(pl.vals);
+        let pane = 0;
+        if (sub) {
+          const other = [...this.stratPlots.values()].find((x) => x._sub);
+          pane = other ? other.getPane().paneIndex() : this.chart.panes().length;
+        }
+        s = this.chart.addSeries(LineSeries, { color: pl.color, lineWidth: 1.5, lineStyle: LineStyle.Solid, priceLineVisible: false, lastValueVisible: sub, crosshairMarkerVisible: false, title: sub ? title : '', priceFormat: sub ? { type: 'price', precision: 2, minMove: 0.01 } : { type: 'price', precision: this.digits, minMove: 10 ** -this.digits } }, pane);
+        s._sub = sub;
         this.stratPlots.set(title, s);
+        if (sub) this.layoutPanes();
       }
       const data = [];
       const n = Math.min(v.length, pl.vals.length);
