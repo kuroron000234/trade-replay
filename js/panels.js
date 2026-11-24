@@ -43,7 +43,7 @@ export class TradingPanel {
       kv('必要証拠金', money(acc.marginUsed(), sym)),
       kv('余剰証拠金', money(acc.freeMargin(), sym)),
       kv('証拠金維持率', ml == null ? '—' : fmtNum(ml, 0) + '%', ml != null && ml < 150 ? 'dn' : ''),
-      a.strategy ? this.compareChip(a) : null);
+      ...(a.strategy ? [this.compareChip(a)] : []));
     this.tabsEl.querySelectorAll('.tab').forEach((b, i) => {
       const n = [acc.pos.qty ? 1 : 0, acc.orders.length, acc.trades.length, acc.execs.length, acc.log.length][i];
       b.textContent = ['ポジション', '注文', '取引履歴', '約定', 'ログ'][i] + (n ? ` ${n}` : '');
@@ -248,7 +248,7 @@ export class EditorPanel {
       el('button', { class: 'btn small', onclick: (e) => this.openMenu(e) }, '開く ▾'),
       el('button', { class: 'btn small', onclick: () => this.open({ kind: 'new' }, TEMPLATE) }, '新規'),
       el('button', { class: 'btn small', onclick: () => this.save() }, '保存'),
-      this.cur.kind === 'custom' ? el('button', { class: 'btn small', onclick: () => this.del() }, '削除') : null,
+      this.cur.kind === 'custom' ? el('button', { class: 'btn small', onclick: () => this.del() }, '削除') : '',
       el('span', { class: 'muted' }, title + (this.dirty ? ' ●' : '')),
       el('span', { class: 'grow' }),
       el('button', { class: 'btn small', onclick: () => this.help() }, '書き方'),
