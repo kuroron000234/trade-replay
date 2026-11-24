@@ -322,3 +322,44 @@ function onBar(s, inp) {
   if (s.ta.crossunder(s.close, ma)) s.closePosition();
 }
 `;
+
+// AI にストラテジーを書いてもらうときに渡す API の説明
+export const STRATEGY_API = `## このサイトのストラテジーの書き方（JavaScript）
+次の形のコードを 1 つだけ書く。グローバルに name・inputs・onBar を定義する（import や外部通信、DOM、setTimeout は使えない）。
+
+\`\`\`strategy
+const name = 'ストラテジー名';
+const inputs = {
+  fast: { label: '短期MA', value: 9 },          // 数値の入力。step も付けられる: { label, value, step }
+  qty: { label: '数量', value: 0.1 },           // qty があれば発注数量に使われる（無ければ注文パネルの既定数量）
+};
+function onBar(s, inp) {
+  // 足が確定するたびに 1 回呼ばれる。inp.fast のように入力値を読む
+}
+\`\`\`
+
+### 系列（Series）
+- s.open / s.high / s.low / s.close / s.volume / s.hl2 / s.hlc3 / s.ohlc4
+- 系列.at(0) が今の確定足、.at(1) が 1 本前。最初のうちは NaN になるので Number.isFinite で確認する
+- 未来の足は見えない（参照する方法もない）
+
+### インジケーター（s.ta）
+- s.ta.sma(src, len) / ema / rma / wma / stdev / highest(src, len) / lowest(src, len) → 系列
+- s.ta.rsi(src, len) → 系列、s.ta.atr(len) → 系列、s.ta.vwap() → 系列、s.ta.sar(start, inc, max) → 系列
+- s.ta.macd(fast, slow, sig) → { macd, signal, hist }、s.ta.bb(len, mult) → { upper, basis, lower }
+- s.ta.stoch(k, kSmooth, d) → { k, d }、s.ta.dmi(len, adxSmooth) → { adx, pdi, mdi }
+- s.ta.supertrend(len, mult) → { line, dir }（dir は 1 / -1）、s.ta.donchian(len) → { upper, basis, lower }
+- s.ta.ichimoku(conv, base, spanB, disp) → { tenkan, kijun, spanA, spanB, chikou }（spanA/spanB は disp ずらす前の値）
+- s.ta.crossover(a, b) / crossunder(a, b) / cross(a, b)（a, b は系列か数値）、s.ta.change(a, n)、s.ta.rising(a, n)、s.ta.falling(a, n)、s.ta.nz(x, d)
+- src には上の系列か、ta が返した系列を渡せる（例: s.ta.sma(s.ta.rsi(s.close, 14), 5)）
+
+### 発注
+- s.entry('long' | 'short', { qty, sl, tp, limit, stop, comment, add })
+  - 成行は次の足の始値で約定。反対のポジションがあれば途転。同じ向きは積み増ししない（add: true で積み増し）
+  - sl / tp は価格。limit / stop を付けると指値・逆指値の待機注文（新しい entry で置き換わる）
+- s.closePosition(comment) 決済 / s.exit({ sl, tp }) 今のポジションの損切り・利確を変更 / s.cancel() 待機注文を取消
+- s.position: { size, side（1 / -1 / 0）, avg, sl, tp, profit }、s.equity、s.balance
+- s.time（足の開始時刻、UTC の秒）。日本時間の時: new Date((s.time + 9 * 3600) * 1000).getUTCHours()、曜日: getUTCDay()
+- s.symbol、s.tf（秒）、s.pip（FX の 1pips の値幅。暗号資産は 0）、s.digits、s.bar_index
+- s.plot(値または系列, '名前', '#色') でチャートに線を描く、s.log('メッセージ')
+- 損失を口座の r% に抑える数量の例: const q = (s.equity * r / 100) / Math.abs(entry - sl)（数量の刻みに注意して丸める）`;
