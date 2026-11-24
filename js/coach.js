@@ -82,7 +82,7 @@ export class Coach {
     else this.status.textContent = 'このページでは使えません（Windows 版で使えます）';
     // インストールが終わったら、続けてログインの窓を開く
     if (this.autoLogin && j?.installed && !j.loggedIn && !j.setup?.running) { this.autoLogin = false; this.login(); }
-    if (j?.host === 'desktop' && !this.available) this.showSetup(); else if (this.setupBox) { this.hideSetup(); this.empty(); }
+    if (j?.host === 'desktop' && !this.available) this.showSetup(); else { this.hideSetup(); this.empty(); }
     return this.available;
   }
   // ---------- 初めての人向けのセットアップ（Windows 版） ----------
@@ -117,7 +117,7 @@ export class Coach {
           st.loginOpened ? el('div', { class: 'muted' }, 'ログインが終わると、ここは自動で切り替わります…') : null)));
   }
   hideSetup() {
-    clearInterval(this.poll); this.poll = null;
+    if (this.poll) { clearInterval(this.poll); this.poll = null; }
     if (this.setupBox) { this.setupBox.remove(); this.setupBox = null; toast('AI トレーナーの準備ができました', 'ok'); }
   }
   async post(path) {
@@ -139,16 +139,16 @@ export class Coach {
       el('p', { class: 'muted' }, '使うには Claude Code（Anthropic 公式）のインストールと、Claude の有料プラン（Pro / Max など）でのログインが必要です。インストールは自動で行い、ログインは画面で案内します。'),
       el('p', { class: 'muted' }, 'あとからでも「AI トレーナー」タブで準備できます。')), {
       width: 460,
-      buttons: [{ label: 'あとで' }, { label: 'セットアップする', primary: true, onclick: () => { this.app.showBottom(4); if (!j.installed) this.install(); else this.login(); } }],
+      buttons: [{ label: 'あとで' }, { label: 'セットアップする', primary: true, onclick: () => { this.app.showBottom(4, 460); if (!j.installed) this.install(); else this.login(); } }],
     });
   }
   empty() {
     if (this.history.length || this.setupBox) return;
     this.log.innerHTML = '';
-    this.log.append(el('div', { class: 'empty' }, this.mode === 'rules'
+    this.log.append(...[el('div', { class: 'empty' }, this.mode === 'rules'
       ? 'トレーナーと話しながら、機械的に判定できる取引ルールを決めます。決まったルールはコードになり、「▶ チャートで回す」でバックテストやリプレイ中の自動売買に使えます。「ルール作りを始める」を押すか、やりたいトレードを書いてください。'
       : 'Claude がトレード記録を読んで、癖や改善点を教えてくれます。上のボタンを押すか、質問を書いてください。'),
-      this.info === null && !this.available ? el('div', { class: 'empty muted' }, '（AI トレーナーは Windows 版で使えます。', el('a', { href: RELEASES, target: '_blank', rel: 'noopener' }, 'ダウンロード'), '）') : null);
+      this.info === null && !this.available ? el('div', { class: 'empty muted' }, '（AI トレーナーは Windows 版で使えます。', el('a', { href: RELEASES, target: '_blank', rel: 'noopener' }, 'ダウンロード'), '）') : null].filter(Boolean));
   }
   reset() { this.stop(); this.history = []; this.session = null; this.empty(); }
 

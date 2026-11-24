@@ -552,7 +552,12 @@ class App {
       window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
     });
   }
-  showBottom(i) { this.bottomTabs.select(i); }
+  showBottom(i, minH) {
+    this.bottomTabs.select(i);
+    const b = $('#bottom');
+    b.classList.remove('collapsed');
+    if (minH && b.offsetHeight < minH) { b.style.height = Math.min(minH, innerHeight - 220) + 'px'; this.cv.positionPaneLegends(); }
+  }
 
   buildReplayBar() {
     this.rb = el('div', { id: 'replayBar', class: 'replay-bar', hidden: true });
