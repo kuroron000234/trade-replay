@@ -91,13 +91,13 @@ export class Source {
     this.t = []; this.o = []; this.h = []; this.l = []; this.c = []; this.v = [];
     this.hl2 = []; this.hlc3 = []; this.ohlc4 = []; this.n = 0;
   }
-  sync(bars, from) {
-    for (let i = from; i < bars.length; i++) {
+  sync(bars, from, to = bars.length) {
+    for (let i = from; i < to; i++) {
       const b = bars[i];
       this.t[i] = b.t; this.o[i] = b.o; this.h[i] = b.h; this.l[i] = b.l; this.c[i] = b.c; this.v[i] = b.v;
       this.hl2[i] = (b.h + b.l) / 2; this.hlc3[i] = (b.h + b.l + b.c) / 3; this.ohlc4[i] = (b.o + b.h + b.l + b.c) / 4;
     }
-    this.n = bars.length;
+    this.n = to;
     for (const k of ['t', 'o', 'h', 'l', 'c', 'v', 'hl2', 'hlc3', 'ohlc4']) this[k].length = this.n;
   }
 }
