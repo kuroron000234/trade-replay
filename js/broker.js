@@ -78,8 +78,8 @@ export class Account {
       if (fresh) { p.t = this.t; p.sl = null; p.tp = null; p.mae = 0; p.mfe = 0; }
     }
     if (p.qty && Math.sign(p.qty) === side) {
-      if (extra.sl != null) p.sl = extra.sl;
-      if (extra.tp != null) p.tp = extra.tp;
+      if (Number.isFinite(extra.sl)) p.sl = extra.sl;
+      if (Number.isFinite(extra.tp)) p.tp = extra.tp;
     }
     this.markEquity();
     this.version++;
@@ -94,10 +94,11 @@ export class Account {
     return null;
   }
   // 成行（ストラテジー）: 次の値動きで約定（バックテストと同じく次の足の始値相当）
-  queueMarket(side, qty, extra = {}) { this.queued.push({ side, qty, extra }); }
+  queueMarket(side, qty, extra = {}) { if (!(qty > 0)) return; this.queued.push({ side, qty, extra }); }
 
   placeOrder(o) {
-    const ord = { id: seq++, side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl ?? null, tp: o.tp ?? null, t: this.t, comment: o.comment || '' };
+    if (!Number.isFinite(o.price) || !(o.qty > 0)) { this.note('注文の価格・数量が正しくありません'); return null; }
+    const ord = { id: seq++, side: o.side, type: o.type, price: o.price, qty: o.qty, sl: Number.isFinite(o.sl) ? o.sl : null, tp: Number.isFinite(o.tp) ? o.tp : null, t: this.t, comment: o.comment || '' };
     this.orders.push(ord);
     this.version++;
     return ord;
@@ -107,8 +108,8 @@ export class Account {
   modifyOrder(id, patch) { const o = this.orders.find((x) => x.id === id); if (o) { Object.assign(o, patch); this.version++; } }
   setBrackets(sl, tp) {
     if (!this.pos.qty) return;
-    if (sl !== undefined) this.pos.sl = sl;
-    if (tp !== undefined) this.pos.tp = tp;
+    if (sl !== undefined) this.pos.sl = Number.isFinite(sl) ? sl : null;
+    if (tp !== undefined) this.pos.tp = Number.isFinite(tp) ? tp : null;
     this.version++;
   }
   closePosition(reason = '決済', qty) {
