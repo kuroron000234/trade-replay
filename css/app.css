@@ -219,6 +219,8 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
   .tf-btn:nth-of-type(n+5) { display: none; }
   #tools { width: 40px; }
   .tool { width: 32px; height: 32px; }
+  #top { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .logo { display: none; }
   .rb-time { display: none; }
   .rb-btn span { display: none; }
   .sep, .clock { display: none; }

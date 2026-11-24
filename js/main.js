@@ -107,6 +107,7 @@ class App {
     this.ticket.sync(true);
     this.updateReplayBar();
     this.updateFills();
+    this.cv.positionPaneLegends();
     const vr = this.cv.chart.timeScale().getVisibleLogicalRange();
     $('#toRT').hidden = !vr || vr.to > this.cv.view.length + 2;
   }
