@@ -523,7 +523,7 @@ class App {
     const body = el('div', { class: 'bottom-body' });
     const panes = [0, 1, 2, 3, 4].map((i) => el('div', { class: 'bpane', hidden: i > 0 }));
     body.append(...panes);
-    this.bottomTabs = tabs(['取引パネル', 'ストラテジーテスター', 'ストラテジーエディター', 'トレード記録', 'AI コーチ'], (i) => {
+    this.bottomTabs = tabs(['取引パネル', 'ストラテジーテスター', 'ストラテジーエディター', 'トレード記録', 'AI トレーナー'], (i) => {
       panes.forEach((p, k) => (p.hidden = k !== i));
       b.classList.remove('collapsed');
       store.set('bottomTab', i);
