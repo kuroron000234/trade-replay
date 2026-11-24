@@ -371,12 +371,18 @@ export class Ticket {
   defaultBracket(k) {
     const e = this.entryPx(); if (e == null) return;
     const sym = this.app.sym;
-    let dist = sym.pip ? sym.pip * 20 : e * 0.01;
-    // 初期位置がチャートの表示範囲からはみ出さないようにする（利確は損切りの2倍の距離）
+    const base = sym.pip ? sym.pip * 20 : e * 0.01;
+    // 損切りは base、利確はその2倍。ただしチャートの表示範囲からはみ出さないよう、その向きの余白の 8 割までにする
+    const dir = k === 'sl' ? -this.side : this.side;
+    let dist = k === 'sl' ? base : base * 2;
     const cv = this.app.cv, h = cv.paneRect?.().h;
-    if (h) { const span = Math.abs(cv.priceOfY(0) - cv.priceOfY(h)); if (span > 0) dist = Math.min(dist, span * 0.18); }
-    if (k === 'sl' && this.useSL && !this.slIn.value) this.slIn.value = this.fmtP(e - this.side * dist);
-    if (k === 'tp' && this.useTP && !this.tpIn.value) this.tpIn.value = this.fmtP(e + this.side * dist * 2);
+    if (h) {
+      const top = cv.priceOfY(0), bottom = cv.priceOfY(h);
+      const room = dir > 0 ? top - e : e - bottom;
+      if (room > 0) dist = Math.min(dist, room * 0.8);
+    }
+    if (k === 'sl' && this.useSL && !this.slIn.value) this.slIn.value = this.fmtP(e + dir * dist);
+    if (k === 'tp' && this.useTP && !this.tpIn.value) this.tpIn.value = this.fmtP(e + dir * dist);
   }
   // 資金（有効証拠金）の p 割を証拠金に使う数量
   pctQty(p) {
