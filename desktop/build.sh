@@ -14,7 +14,7 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LD" -o ../dist/TradeRepl
 go build -trimpath -ldflags "$LD" -o ../dist/trade-replay-linux .
 cd ../dist
 rm -f TradeReplay-*-windows-x64.zip
-mkdir -p pkg && cp TradeReplay.exe pkg/ && cp ../desktop/README-windows.txt pkg/はじめにお読みください.txt
+mkdir -p pkg && cp TradeReplay.exe pkg/ && cp ../desktop/README-windows.txt pkg/README.txt
 (cd pkg && zip -qr "../TradeReplay-$VER-windows-x64.zip" .)
 rm -rf pkg
 ls -la
