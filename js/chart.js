@@ -397,7 +397,7 @@ export class ChartView extends Emitter {
     const panes = this.chart.panes();
     const tops = [];
     let y = 0;
-    panes.forEach((p, i) => { tops[i] = y; y += this.chart.paneSize(i).height + 1; });
+    try { panes.forEach((p, i) => { tops[i] = y; y += this.chart.paneSize(i).height + 1; }); } catch { return; } // まだ配置前のペインがある
     for (const ind of this.inds) {
       if (ind.def.overlay || !ind.series[0] || !ind.legendRow) continue;
       const i = ind.series[0].getPane().paneIndex();
