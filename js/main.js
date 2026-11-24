@@ -538,6 +538,7 @@ class App {
     this.editor = new EditorPanel(panes[2], this);
     this.journal = new JournalPanel(panes[3], this);
     this.coach = new Coach(panes[4], this);
+    this.coach.offerSetup();
     this.bottomTabs.select(store.get('bottomTab', 0));
     if (store.get('bottomCollapsed', false)) b.classList.add('collapsed');
     b.style.height = store.get('bottomH', 260) + 'px';

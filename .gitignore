@@ -1,0 +1,4 @@
+desktop/site/
+desktop/prompts.json
+dist/
+__pycache__/

@@ -271,3 +271,16 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
 .md-tbl { margin: 6px 0; width: auto; } .md-tbl th, .md-tbl td { border: 1px solid var(--border); padding: 3px 8px; white-space: normal; }
 .strat-card { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--blue); border-radius: 6px; background: rgba(41,98,255,.08); }
 .coach-head .tabs .tab { padding: 3px 10px; font-size: 12px; }
+
+/* AI トレーナーのセットアップ（Windows 版） */
+.coach-setup { max-width: 640px; margin: 4px auto; display: flex; flex-direction: column; gap: 10px; }
+.coach-setup h3 { margin: 0; font-size: 15px; }
+.coach-setup p { margin: 0; }
+.setup-step { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.setup-step > div:last-child { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; flex: 1; }
+.setup-step.later { opacity: .55; }
+.setup-step.done { border-color: color-mix(in srgb, var(--up) 50%, var(--border)); }
+.setup-n { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; background: var(--border); }
+.setup-step.now .setup-n { background: var(--blue); color: #fff; }
+.setup-step.done .setup-n { background: var(--up); color: #fff; }
+.setup-log { margin: 0; max-height: 140px; overflow: auto; width: 100%; font-size: 11px; white-space: pre-wrap; word-break: break-all; background: rgba(0,0,0,.25); padding: 6px 8px; border-radius: 4px; }

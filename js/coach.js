@@ -1,8 +1,10 @@
-// AI コーチ: Cloud Shell で `Trading` から起動したときだけ、ローカルサーバー経由で `claude -p` に相談する
-// （GitHub Pages など、サーバーがない環境では使えない旨を表示する）
+// AI トレーナー: ローカルサーバー（Windows 版の exe、または Cloud Shell の `Trading`）経由で `claude -p` に相談する
+// （GitHub Pages など、サーバーがない環境では Windows 版を案内する）
+// Windows 版で Claude Code が未導入・未ログインなら、インストールとログインを案内する
 import { el, store, toast, fmtNum, fmtTime } from './util.js';
 import { toAIText, marketContext, summarize } from './journal.js';
 import { STRATEGY_API, compile } from './strategy.js';
+import { modal } from './ui.js';
 
 export const MODELS = [
   ['', 'Claude Code の既定モデル'],
@@ -12,6 +14,7 @@ export const MODELS = [
 ];
 const API = 'api/coach';
 const HDR = { 'X-Trade-Replay': '1' };
+const RELEASES = 'https://github.com/kuroron000234/trade-replay/releases/latest';
 
 export class Coach {
   constructor(root, app) {
@@ -40,7 +43,7 @@ export class Coach {
       this.log,
       el('div', { class: 'coach-foot' }, this.input, this.sendBtn));
     this.setMode(this.mode, true);
-    this.check();
+    this.ready = this.check();
   }
   setMode(m, init) {
     if (!init && m === this.mode) return;
@@ -64,23 +67,88 @@ export class Coach {
     this.input.placeholder = m === 'rules' ? 'どんなルールで取引したいか書いてください（例: 15分足で押し目買い、損切りは直近安値）' : '質問を入力（Enter で送信、Shift+Enter で改行）';
     if (!init) this.reset(); else this.empty();
   }
-  async check() {
+  async check(fresh) {
+    let j = null;
     try {
-      const r = await fetch(API + '/status', { headers: HDR, cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
-      this.available = !!j?.available;
-    } catch { this.available = false; }
-    this.status.textContent = this.available ? 'Cloud Shell の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）' : '';
-    this.status.className = this.available ? 'muted' : 'dn';
-    if (!this.available) this.status.textContent = 'このページでは使えません。Cloud Shell で `Trading` を実行して開いたページで使えます';
+      const r = await fetch(API + '/status' + (fresh ? '?fresh=1' : ''), { headers: HDR, cache: 'no-store' });
+      j = r.ok ? await r.json() : null;
+    } catch {}
+    this.info = j;
+    this.available = !!j?.available;
+    this.status.className = 'muted';
+    if (this.available) this.status.textContent = j.host === 'desktop' ? 'この PC の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）' : 'Cloud Shell の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）';
+    else if (j?.host === 'desktop') this.status.textContent = '準備が必要です（下の案内に従ってください）';
+    else if (j) this.status.textContent = 'Claude Code が見つかりません';
+    else this.status.textContent = 'このページでは使えません（Windows 版で使えます）';
+    // インストールが終わったら、続けてログインの窓を開く
+    if (this.autoLogin && j?.installed && !j.loggedIn && !j.setup?.running) { this.autoLogin = false; this.login(); }
+    if (j?.host === 'desktop' && !this.available) this.showSetup(); else if (this.setupBox) { this.hideSetup(); this.empty(); }
     return this.available;
   }
+  // ---------- 初めての人向けのセットアップ（Windows 版） ----------
+  showSetup() {
+    const j = this.info || {}, st = j.setup || {};
+    if (!this.setupBox) {
+      this.log.innerHTML = '';
+      this.setupBox = el('div', { class: 'coach-setup' });
+      this.log.append(this.setupBox);
+      clearInterval(this.poll);
+      this.poll = setInterval(() => this.check(), 2000);
+    }
+    const step = (n, title, state, body) => el('div', { class: 'setup-step ' + state }, el('div', { class: 'setup-n' }, state === 'done' ? '✓' : String(n)), el('div', {}, el('b', {}, title), body));
+    const installing = st.running && st.step === 'install';
+    const s1 = j.installed ? 'done' : 'now';
+    const s2 = !j.installed ? 'later' : j.loggedIn ? 'done' : 'now';
+    this.setupBox.innerHTML = '';
+    this.setupBox.append(
+      el('h3', {}, 'AI トレーナーの準備'),
+      el('p', { class: 'muted' }, 'AI トレーナーは、Anthropic 公式の Claude Code（claude コマンド）を使って Claude と話します。最初に 1 回だけ準備が必要です。'),
+      step(1, 'Claude Code をインストール', s1, j.installed ? el('div', { class: 'muted' }, 'インストール済みです')
+        : el('div', {},
+          el('div', { class: 'muted' }, '公式のインストーラーを自動で実行します（管理者権限は不要、数分かかります）。'),
+          el('button', { class: 'btn small primary', disabled: installing, onclick: () => this.install() }, installing ? 'インストール中…' : (st.step === 'failed' ? 'もう一度試す' : 'インストールする')),
+          st.error ? el('div', { style: { color: 'var(--dn)' } }, 'インストールできませんでした: ' + st.error) : null,
+          (installing || st.error) && st.log ? el('pre', { class: 'setup-log' }, st.log.slice(-1200)) : null)),
+      step(2, 'Claude にログイン', s2, j.loggedIn ? el('div', { class: 'muted' }, 'ログイン済みです')
+        : el('div', {},
+          el('div', { class: 'muted' }, '「ログイン」を押すと窓が開き、続けてブラウザで Claude のログイン画面が開きます。ログインして「承認」を押してください。'),
+          el('div', { class: 'muted' }, 'Claude の Pro / Max などの有料プラン、または Anthropic Console のアカウントが必要です（無料プランでは使えません）。'),
+          el('button', { class: 'btn small primary', disabled: !j.installed, onclick: () => this.login() }, st.loginOpened ? 'ログインの窓をもう一度開く' : 'ログイン'),
+          st.loginOpened ? el('div', { class: 'muted' }, 'ログインが終わると、ここは自動で切り替わります…') : null)));
+  }
+  hideSetup() {
+    clearInterval(this.poll); this.poll = null;
+    if (this.setupBox) { this.setupBox.remove(); this.setupBox = null; toast('AI トレーナーの準備ができました', 'ok'); }
+  }
+  async post(path) {
+    const r = await fetch(path, { method: 'POST', headers: HDR }).catch(() => null);
+    const j = r ? await r.json().catch(() => ({})) : { error: 'サーバーに接続できません' };
+    if (!r?.ok) toast(j.error || 'エラー', 'err', 5000);
+    return r?.ok;
+  }
+  async install() { this.autoLogin = true; await this.post('api/setup/install'); this.check(); }
+  async login() { await this.post('api/setup/login'); this.check(true); }
+  // 起動時: Windows 版で未セットアップなら、自動セットアップを提案する
+  async offerSetup() {
+    await this.ready;
+    const j = this.info;
+    if (j?.host !== 'desktop' || this.available || store.get('setupOffered', false)) return;
+    store.set('setupOffered', true);
+    modal('AI トレーナーを使いますか？', el('div', {},
+      el('p', {}, 'Claude と話しながら売買ルールを作り、そのままチャートでバックテストできます。'),
+      el('p', { class: 'muted' }, '使うには Claude Code（Anthropic 公式）のインストールと、Claude の有料プラン（Pro / Max など）でのログインが必要です。インストールは自動で行い、ログインは画面で案内します。'),
+      el('p', { class: 'muted' }, 'あとからでも「AI トレーナー」タブで準備できます。')), {
+      width: 460,
+      buttons: [{ label: 'あとで' }, { label: 'セットアップする', primary: true, onclick: () => { this.app.showBottom(4); if (!j.installed) this.install(); else this.login(); } }],
+    });
+  }
   empty() {
-    if (this.history.length) return;
+    if (this.history.length || this.setupBox) return;
     this.log.innerHTML = '';
     this.log.append(el('div', { class: 'empty' }, this.mode === 'rules'
       ? 'トレーナーと話しながら、機械的に判定できる取引ルールを決めます。決まったルールはコードになり、「▶ チャートで回す」でバックテストやリプレイ中の自動売買に使えます。「ルール作りを始める」を押すか、やりたいトレードを書いてください。'
-      : 'Claude がトレード記録を読んで、癖や改善点を教えてくれます。上のボタンを押すか、質問を書いてください。'), el('div', { class: 'empty muted' }, '（Cloud Shell で `Trading` を実行して開いたときだけ使えます）'));
+      : 'Claude がトレード記録を読んで、癖や改善点を教えてくれます。上のボタンを押すか、質問を書いてください。'),
+      this.info === null && !this.available ? el('div', { class: 'empty muted' }, '（AI トレーナーは Windows 版で使えます。', el('a', { href: RELEASES, target: '_blank', rel: 'noopener' }, 'ダウンロード'), '）') : null);
   }
   reset() { this.stop(); this.history = []; this.session = null; this.empty(); }
 
@@ -152,7 +220,7 @@ export class Coach {
   }
   async send(content, effort, shown) {
     if (this.busy) return;
-    if (!this.available && !(await this.check())) { toast('AI コーチは Cloud Shell で `Trading` を実行して開いたページで使えます', 'err', 4000); return; }
+    if (!this.available && !(await this.check())) { toast(this.info?.host === 'desktop' ? 'AI トレーナーの準備が必要です（下の案内に従ってください）' : 'AI トレーナーは Windows 版で使えます', 'err', 4000); return; }
     this.bubble('user', shown || content);
     this.history.push({ role: 'user', content });
     const out = this.bubble('assistant', '<span class="thinking">考えています…</span>');
