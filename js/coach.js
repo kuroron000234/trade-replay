@@ -1,35 +1,26 @@
-// AI コーチ: 利用者自身の API キーで Claude を呼び、トレード記録を分析・相談する
-// API キーと記録はこのブラウザから api.anthropic.com へ直接送られる（このサイトのサーバーは経由しない）
+// AI コーチ: Cloud Shell で `Trading` から起動したときだけ、ローカルサーバー経由で `claude -p` に相談する
+// （GitHub Pages など、サーバーがない環境では使えない旨を表示する）
 import { el, store, toast, fmtNum, fmtTime } from './util.js';
 import { toAIText, marketContext, summarize } from './journal.js';
 
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.7.0/+esm';
-let sdkP = null;
-const loadSDK = () => (sdkP ||= import(SDK_URL).catch((e) => { sdkP = null; throw new Error('Anthropic SDK を読み込めませんでした: ' + e.message); }));
-
 export const MODELS = [
-  ['claude-opus-5-5', 'Claude Opus 5.5（標準）'],
-  ['claude-sonnet-5-5', 'Claude Sonnet 5.5'],
-  ['claude-haiku-5-5', 'Claude Haiku 5.5（安い・速い）'],
+  ['', 'Claude Code の既定モデル'],
+  ['opus', 'Opus'],
+  ['sonnet', 'Sonnet'],
+  ['haiku', 'Haiku（速い）'],
 ];
-
-const SYSTEM = `あなたはトレード練習のコーチです。ユーザーは過去の相場データをリアルタイムのように再生するデモ環境で練習しています（実際のお金は動いていません）。
-- 渡された記録データに基づき、具体的な数字や取引の例（日時・銘柄）を挙げて、良い点・悪い癖・次に試すことを伝えてください。
-- データから言えることと推測は分けてください。件数が少ないときは偏りの可能性に触れてください。
-- 相場の先行きを断定したり、特定の売買を勧めたりはせず、判断の材料・リスク管理・ルール作りの観点で助言してください。
-- 日本語で、見出しと箇条書きを使って簡潔に。`;
+const API = 'api/coach';
+const HDR = { 'X-Trade-Replay': '1' };
 
 export class Coach {
   constructor(root, app) {
     this.app = app;
     this.history = [];
+    this.session = null;
     this.busy = false;
-    this.keyIn = el('input', { type: 'password', placeholder: 'sk-ant-...', value: store.get('apiKey', '') || sessionStorage.getItem('tr.apiKey') || '', autocomplete: 'off', class: 'key-in' });
-    this.saveChk = el('input', { type: 'checkbox', checked: !!store.get('apiKey', '') });
-    this.model = el('select', {}, ...MODELS.map(([v, l]) => el('option', { value: v, selected: v === store.get('coachModel', MODELS[0][0]) }, l)));
-    this.model.onchange = () => store.set('coachModel', this.model.value);
-    this.keyIn.onchange = () => this.persistKey();
-    this.saveChk.onchange = () => this.persistKey();
+    this.model = el('select', {}, ...MODELS.map(([v, l]) => el('option', { value: v, selected: v === store.get('coachModel', '') }, l)));
+    this.model.onchange = () => { store.set('coachModel', this.model.value); this.reset(); };
+    this.status = el('span', { class: 'muted' }, '確認中…');
     this.log = el('div', { class: 'coach-log' });
     this.input = el('textarea', { class: 'coach-in', rows: 2, placeholder: '質問を入力（Enter で送信、Shift+Enter で改行）' });
     this.input.addEventListener('keydown', (e) => {
@@ -38,33 +29,34 @@ export class Coach {
     });
     this.sendBtn = el('button', { class: 'btn small primary', onclick: () => (this.busy ? this.stop() : this.ask()) }, '送信');
     root.append(
-      el('div', { class: 'coach-head' },
-        el('label', { class: 'chk' }, 'API キー', this.keyIn),
-        el('label', { class: 'chk', title: 'オフにするとこのタブを閉じるまでだけ覚えます' }, this.saveChk, 'このブラウザに保存'),
-        this.model,
-        el('a', { href: 'https://platform.claude.com/settings/keys', target: '_blank', rel: 'noopener', class: 'muted' }, 'キーを作る'),
-        el('span', { class: 'grow' }),
+      el('div', { class: 'coach-head' }, el('b', {}, 'AI コーチ（claude -p）'), this.model, this.status, el('span', { class: 'grow' }),
         el('button', { class: 'btn small', onclick: () => this.reset() }, '会話をリセット')),
       el('div', { class: 'coach-quick' },
         el('button', { class: 'btn small', onclick: () => this.analyzeSession() }, '今のセッションを振り返る'),
         el('button', { class: 'btn small', onclick: () => this.analyzeAll() }, '全取引の傾向と改善点'),
-        el('button', { class: 'btn small', onclick: () => this.askSituation() }, '今の局面を相談'),
-        el('span', { class: 'muted' }, 'キーと記録はこのブラウザから Anthropic の API に直接送られます。利用料はキーの持ち主に請求されます。')),
+        el('button', { class: 'btn small', onclick: () => this.askSituation() }, '今の局面を相談')),
       this.log,
       el('div', { class: 'coach-foot' }, this.input, this.sendBtn));
     this.empty();
+    this.check();
   }
-  persistKey() {
-    const k = this.keyIn.value.trim();
-    if (this.saveChk.checked) store.set('apiKey', k); else store.set('apiKey', '');
-    try { sessionStorage.setItem('tr.apiKey', k); } catch { /* */ }
+  async check() {
+    try {
+      const r = await fetch(API + '/status', { headers: HDR, cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      this.available = !!j?.available;
+    } catch { this.available = false; }
+    this.status.textContent = this.available ? 'Cloud Shell の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）' : '';
+    this.status.className = this.available ? 'muted' : 'dn';
+    if (!this.available) this.status.textContent = 'このページでは使えません。Cloud Shell で `Trading` を実行して開いたページで使えます';
+    return this.available;
   }
   empty() {
     if (this.history.length) return;
     this.log.innerHTML = '';
-    this.log.append(el('div', { class: 'empty' }, 'Claude がトレード記録を読んで、癖や改善点を教えてくれます。上のボタンを押すか、質問を書いてください。'));
+    this.log.append(el('div', { class: 'empty' }, 'Claude がトレード記録を読んで、癖や改善点を教えてくれます。上のボタンを押すか、質問を書いてください。（Cloud Shell で `Trading` を実行して開いたときだけ使えます）'));
   }
-  reset() { this.stop(); this.history = []; this.empty(); }
+  reset() { this.stop(); this.history = []; this.session = null; this.empty(); }
 
   // ---------- 送るデータ ----------
   async analyzeSession() {
@@ -130,55 +122,52 @@ export class Coach {
     return b;
   }
   async send(content, effort, shown) {
-    const key = this.keyIn.value.trim();
-    if (!key) { toast('API キーを入れてください', 'err'); this.keyIn.focus(); return; }
-    this.persistKey();
+    if (this.busy) return;
+    if (!this.available && !(await this.check())) { toast('AI コーチは Cloud Shell で `Trading` を実行して開いたページで使えます', 'err', 4000); return; }
     this.bubble('user', shown || content);
     this.history.push({ role: 'user', content });
     const out = this.bubble('assistant', '<span class="thinking">考えています…</span>');
     this.busy = true; this.sendBtn.textContent = '停止';
-    let text = '';
+    this.ctrl = new AbortController();
+    let text = '', done = null, err = null;
     try {
-      const { default: Anthropic } = await loadSDK();
-      this.Anthropic = Anthropic;
-      const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
-      const model = this.model.value;
-      const params = { model, max_tokens: 64000, system: SYSTEM, messages: this.history, output_config: { effort } };
-      // 安全分類器で断られたときに別モデルへ自動で切り替える（Haiku は非対応）
-      if (model !== 'claude-haiku-5-5') { params.betas = ['server-side-fallback-2026-07-01']; params.fallbacks = 'default'; }
-      this.stream = client.beta.messages.stream(params);
-      for await (const ev of this.stream) {
-        if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
-          text += ev.delta.text;
-          out.innerHTML = md(text);
-          this.log.scrollTop = this.log.scrollHeight;
+      const r = await fetch(API, {
+        method: 'POST', signal: this.ctrl.signal,
+        headers: { ...HDR, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: content, session: this.session, model: this.model.value, effort }),
+      });
+      if (!r.ok) throw new Error('サーバーエラー (' + r.status + ')');
+      const reader = r.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done: end } = await reader.read();
+        if (end) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (!line.trim()) continue;
+          const m = JSON.parse(line);
+          if (m.t === 'start') this.session = m.session;
+          else if (m.t === 'text') { text += m.v; out.innerHTML = md(text); this.log.scrollTop = this.log.scrollHeight; }
+          else if (m.t === 'done') done = m;
+          else if (m.t === 'error') err = m.v;
         }
       }
-      const msg = await this.stream.finalMessage();
-      if (msg.stop_reason === 'refusal') {
-        out.innerHTML = md(text) + '<p class="dn">（この内容には答えられないと判断されました）</p>';
-        this.history.pop();
-      } else {
-        this.history.push({ role: 'assistant', content: msg.content });
-        if (msg.stop_reason === 'max_tokens') out.innerHTML += '<p class="muted">（長さの上限で途中までになりました）</p>';
-        const u = msg.usage;
-        out.append(el('div', { class: 'usage' }, `${model} ・ 入力 ${u.input_tokens.toLocaleString()} / 出力 ${u.output_tokens.toLocaleString()} トークン`));
-      }
+      if (done?.error) err = done.result || 'Claude Code がエラーを返しました';
+      if (done?.session) this.session = done.session;
+      if (err && !text) throw new Error(err);
+      this.history.push({ role: 'assistant', content: text });
+      if (done?.usage) out.append(el('div', { class: 'usage' }, `入力 ${(done.usage.input_tokens + (done.usage.cache_read_input_tokens || 0) + (done.usage.cache_creation_input_tokens || 0)).toLocaleString()} / 出力 ${done.usage.output_tokens.toLocaleString()} トークン`));
     } catch (e) {
       this.history.pop();
-      const A = this.Anthropic;
-      let msg = e.message;
-      if (A && e instanceof A.AuthenticationError) msg = 'API キーが正しくありません';
-      else if (A && e instanceof A.PermissionDeniedError) msg = 'このキーではこのモデルを使えません';
-      else if (A && e instanceof A.RateLimitError) msg = '利用制限に達しました。しばらく待ってから試してください';
-      else if (A && e instanceof A.APIUserAbortError) msg = '停止しました';
-      else if (A && e instanceof A.APIConnectionError) msg = 'Anthropic の API に接続できませんでした';
+      const msg = e.name === 'AbortError' ? '停止しました' : e.message;
       out.innerHTML = (text ? md(text) : '') + `<p class="dn">${esc(msg)}</p>`;
     } finally {
-      this.busy = false; this.sendBtn.textContent = '送信'; this.stream = null;
+      this.busy = false; this.sendBtn.textContent = '送信'; this.ctrl = null;
     }
   }
-  stop() { try { this.stream?.abort(); } catch { /* */ } }
+  stop() { try { this.ctrl?.abort(); } catch { /* */ } }
 
   // 取引の詳細画面から
   reviewTrade(rec) {
@@ -198,7 +187,17 @@ function md(src) {
     const lines = b.split('\n');
     let html = '', list = null;
     const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    let table = null;
+    const flushTable = () => {
+      if (!table) return;
+      const rows = table.filter((r) => !/^\|?\s*:?-{2,}/.test(r)).map((r) => r.replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim())));
+      html += '<table class="tbl md-tbl">' + rows.map((r, i) => '<tr>' + r.map((c) => (i ? `<td>${c}</td>` : `<th>${c}</th>`)).join('') + '</tr>').join('') + '</table>';
+      table = null;
+    };
     for (const l of lines) {
+      if (/^\s*\|.*\|\s*$/.test(l)) { if (list) { html += `</${list}>`; list = null; } (table ||= []).push(l.trim()); continue; }
+      if (table && !l.trim()) continue;
+      flushTable();
       const m = l.match(/^\s*([-*]|\d+\.)\s+(.*)/);
       if (m) { const tag = /\d/.test(m[1]) ? 'ol' : 'ul'; if (list !== tag) { if (list) html += `</${list}>`; html += `<${tag}>`; list = tag; } html += `<li>${inline(m[2])}</li>`; continue; }
       if (list) { html += `</${list}>`; list = null; }
@@ -207,6 +206,7 @@ function md(src) {
       else if (l.trim() === '---') html += '<hr>';
       else if (l.trim()) html += `<p>${inline(l)}</p>`;
     }
+    flushTable();
     if (list) html += `</${list}>`;
     return html;
   }).join('');

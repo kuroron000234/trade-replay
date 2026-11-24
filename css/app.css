@@ -268,3 +268,4 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
 .coach-foot { display: flex; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); flex: none; align-items: flex-end; }
 .coach-in { flex: 1; resize: none; }
 .bottom-head .tabs { overflow-x: auto; scrollbar-width: none; }
+.md-tbl { margin: 6px 0; width: auto; } .md-tbl th, .md-tbl td { border: 1px solid var(--border); padding: 3px 8px; white-space: normal; }
