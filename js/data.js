@@ -178,6 +178,9 @@ const fx = {
     let bars = [];
     let cursor = end;
     const want = count * tf / 60;
+    // 手持ちの最新月より先なら、最新月の終わりまで戻る
+    const lastK = months[months.length - 1];
+    if (lastK && monthKey(cursor - 1) > lastK) { const [ly, lm] = lastK.split('-').map(Number); cursor = Math.min(cursor, Date.UTC(ly, lm, 1) / 1000); }
     for (let i = 0; i < 4 && bars.length < want; i++) {
       const k = monthKey(cursor - 1);
       if (!months.includes(k)) break;
