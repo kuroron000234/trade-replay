@@ -8,9 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unsafe"
 )
 
 const createNoWindow = 0x08000000
+
+// 日本語版 Windows のコンソールは CP932 なので、UTF-8 の出力が化けないように切り替える
+func init() {
+	k := syscall.NewLazyDLL("kernel32.dll")
+	k.NewProc("SetConsoleOutputCP").Call(65001)
+	k.NewProc("SetConsoleTitleW").Call(uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("Trade Replay（この窓を閉じると終了）"))))
+}
 
 // 裏で動かすコマンドのために黒い窓を開かない
 func hideWindow(cmd *exec.Cmd) {
