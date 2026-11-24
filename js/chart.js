@@ -42,7 +42,9 @@ export class ChartView extends Emitter {
 
   // ---------- メイン系列 ----------
   makeMain() {
-    if (this.main) { this.markers?.detach?.(); this.chart.removeSeries(this.main); }
+    // 先に新しい系列を作ってから古い系列を消す（ペイン0が空になって消えるのを防ぐ）
+    const old = this.main;
+    if (old) this.markers?.detach?.();
     const pf = { type: 'price', precision: this.digits, minMove: 10 ** -this.digits };
     const common = { priceFormat: pf, lastValueVisible: true, priceLineVisible: true, priceLineStyle: LineStyle.Dotted };
     const t = this.type;
@@ -51,6 +53,7 @@ export class ChartView extends Emitter {
     else if (t === 'area') this.main = this.chart.addSeries(AreaSeries, { ...common, lineColor: C.blue, topColor: 'rgba(41,98,255,0.35)', bottomColor: 'rgba(41,98,255,0.02)', lineWidth: 2 }, 0);
     else if (t === 'hollow') this.main = this.chart.addSeries(CandlestickSeries, { ...common, upColor: 'rgba(0,0,0,0)', downColor: C.dn, borderUpColor: C.up, borderDownColor: C.dn, wickUpColor: C.up, wickDownColor: C.dn }, 0);
     else this.main = this.chart.addSeries(CandlestickSeries, { ...common, upColor: C.up, downColor: C.dn, borderVisible: false, wickUpColor: C.up, wickDownColor: C.dn }, 0);
+    if (old) this.chart.removeSeries(old);
     this.markers = createSeriesMarkers(this.main, []);
     this.markers.setMarkers(this.markersData);
   }
@@ -62,7 +65,10 @@ export class ChartView extends Emitter {
   setSymbol(sym, tf, off) {
     this.sym = sym; this.tf = tf; this.off = off;
     this.digits = sym.digits;
-    this.makeMain();
+    this.main.applyOptions({ priceFormat: { type: 'price', precision: this.digits, minMove: 10 ** -this.digits } });
+    for (const ind of this.inds) if (ind.def.overlay && !ind.def.volume) for (const s of ind.series) s.applyOptions({ priceFormat: { type: 'price', precision: this.digits, minMove: 10 ** -this.digits } });
+    this.markersData = [];
+    this.markers.setMarkers([]);
     this.legendTitle();
   }
   setDigits(d) { if (d !== this.digits) { this.digits = d; this.main.applyOptions({ priceFormat: { type: 'price', precision: d, minMove: 10 ** -d } }); } }
