@@ -139,7 +139,7 @@ export class StrategyRunner {
         const q = Math.sign(cur) === -side ? Math.abs(cur) + qty : qty;
         acc.queueMarket(side, q, { sl: o.sl, tp: o.tp, reason: o.comment || (side > 0 ? '買い' : '売り') });
       },
-      close(comment) {
+      closePosition(comment) {
         const cur = acc.pos.qty + pending();
         if (cur) acc.queueMarket(-Math.sign(cur), Math.abs(cur), { reason: comment || '決済' });
       },
@@ -228,8 +228,8 @@ function onBar(s, inp) {
   if (s.ta.crossover(rsi, inp.low)) s.entry('long');
   if (s.ta.crossunder(rsi, inp.high)) s.entry('short');
   // 50 を回復したら決済
-  if (s.position.side > 0 && rsi.at(0) > 50) s.close('RSI50');
-  if (s.position.side < 0 && rsi.at(0) < 50) s.close('RSI50');
+  if (s.position.side > 0 && rsi.at(0) > 50) s.closePosition('RSI50');
+  if (s.position.side < 0 && rsi.at(0) < 50) s.closePosition('RSI50');
 }
 ` },
   {
@@ -265,8 +265,8 @@ function onBar(s, inp) {
   // 前の足までの高値・安値を更新したらエントリー（損切りは ATR の倍数）
   if (s.position.side <= 0 && s.close.at(0) > hi.at(1)) s.entry('long', { sl: s.close.at(0) - atr * inp.atrMult });
   if (s.position.side >= 0 && s.close.at(0) < lo.at(1)) s.entry('short', { sl: s.close.at(0) + atr * inp.atrMult });
-  if (s.position.side > 0 && s.close.at(0) < xlo.at(1)) s.close('手仕舞い');
-  if (s.position.side < 0 && s.close.at(0) > xhi.at(1)) s.close('手仕舞い');
+  if (s.position.side > 0 && s.close.at(0) < xlo.at(1)) s.closePosition('手仕舞い');
+  if (s.position.side < 0 && s.close.at(0) > xhi.at(1)) s.closePosition('手仕舞い');
 }
 ` },
   {
@@ -311,7 +311,7 @@ const inputs = {
 //   s.ta.sma(src, len) ema rma wma rsi atr macd bb stoch dmi supertrend donchian ichimoku sar vwap
 //   s.ta.highest(src, len) lowest crossover(a, b) crossunder cross change rising falling
 //   s.entry('long' | 'short', { qty, sl, tp, limit, stop })  次の足の始値で約定（反対ポジションは途転）
-//   s.close()  決済 / s.exit({ sl, tp }) 損切り・利確を設定 / s.cancel() 待機注文を取消
+//   s.closePosition()  決済 / s.exit({ sl, tp }) 損切り・利確を設定 / s.cancel() 待機注文を取消
 //   s.position.side (1 / -1 / 0), s.position.avg, s.position.profit / s.equity
 //   s.plot(値, '名前', '#色')  チャートに線を描く / s.log('メッセージ')
 //   入力に qty があれば数量として使われます
@@ -319,6 +319,6 @@ function onBar(s, inp) {
   const ma = s.ta.ema(s.close, inp.len);
   s.plot(ma, 'EMA', '#ffeb3b');
   if (s.ta.crossover(s.close, ma)) s.entry('long');
-  if (s.ta.crossunder(s.close, ma)) s.close();
+  if (s.ta.crossunder(s.close, ma)) s.closePosition();
 }
 `;
