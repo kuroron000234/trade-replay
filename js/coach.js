@@ -234,7 +234,7 @@ export class Coach {
     const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     const lines = [
       `## バックテスト結果: ${a.strat.compiled?.name}（${sym.id}・${a.replay.tf / 60}分足・確定足 ${bt.bars.length} 本、${bt.bars[0] ? fmtTime(bt.bars[0].t) : ''} 〜 ${bt.bars.length ? fmtTime(bt.bars[bt.bars.length - 1].t) : ''}）`,
-      `- 入力: ${JSON.stringify(a.stratInputs())}`,
+      `- 入力: ${JSON.stringify(a.strat.inputs)}`,
       `- 純利益 ${f2(s.net)} ${sym.quote}（${f2(s.netPct)}%）、取引 ${s.n}、勝率 ${f2(s.winRate)}%、PF ${f2(s.pf)}、最大DD ${f2(s.maxDD)}（${f2(s.maxDDpct)}%）、平均損益 ${f2(s.avg)}、平均利益 ${f2(s.avgWin)}、平均損失 ${f2(s.avgLoss)}、最大連敗 ${s.maxLossStreak}`,
       `- 買い: ${s.long.n} 件 勝率 ${f2(s.long.win)}% 損益 ${f2(s.long.net)} / 売り: ${s.short.n} 件 勝率 ${f2(s.short.win)}% 損益 ${f2(s.short.net)}`,
       a.strat.error ? `- 実行時エラー: ${a.strat.error}` : '',
