@@ -52,6 +52,7 @@ export class Account {
   fill(side, qty, px, reason, extra = {}) {
     if (qty <= 0) return;
     const p = this.pos;
+    const eqBefore = this.equity();
     const fee = qty * px * this.cfg.fee;
     this.balance -= fee;
     this.execs.push({ t: this.t, side, qty, px, reason, id: seq++ });
@@ -64,7 +65,10 @@ export class Account {
       const exitFee = (fee * cq) / qty;
       p.fee -= entryFee;
       this.balance += pnl;
-      this.trades.push({ id: seq++, dir, qty: cq, entry: p.avg, exit: px, entryT: p.t, exitT: this.t, pnl: pnl - entryFee - exitFee, gross: pnl, fees: entryFee + exitFee, reason, mae: p.mae, mfe: p.mfe });
+      const tr = { id: seq++, dir, qty: cq, entry: p.avg, exit: px, entryT: p.t, exitT: this.t, pnl: pnl - entryFee - exitFee, gross: pnl, fees: entryFee + exitFee, reason, mae: p.mae, mfe: p.mfe,
+        posId: p.id, ctx: p.ctx, entryReason: p.entryReason, initSL: p.initSL, initTP: p.initTP, openEquity: p.openEquity, slAtExit: p.sl, tpAtExit: p.tp };
+      this.trades.push(tr);
+      this.pendingTrades = (this.pendingTrades || []).concat(tr);
       p.qty += side * cq;
       remain -= cq;
       if (Math.abs(p.qty) < 1e-12) { p.qty = 0; p.avg = 0; p.sl = p.tp = null; p.fee = 0; }
@@ -75,12 +79,20 @@ export class Account {
       p.avg = (aq * p.avg + remain * px) / (aq + remain);
       p.qty += side * remain;
       p.fee += (fee * remain) / qty;
-      if (fresh) { p.t = this.t; p.sl = null; p.tp = null; p.mae = 0; p.mfe = 0; }
+      if (fresh) {
+        p.t = this.t; p.sl = null; p.tp = null; p.mae = 0; p.mfe = 0;
+        p.id = seq++; p.entryReason = reason; p.openEquity = eqBefore; p.initSL = p.initTP = null;
+        p.ctx = this.hooks?.context ? this.hooks.context() : null;
+      }
     }
     if (p.qty && Math.sign(p.qty) === side) {
       if (Number.isFinite(extra.sl)) p.sl = extra.sl;
       if (Number.isFinite(extra.tp)) p.tp = extra.tp;
     }
+    if (p.qty) { if (p.initSL == null && p.sl != null) p.initSL = p.sl; if (p.initTP == null && p.tp != null) p.initTP = p.tp; }
+    this.hooks?.fill?.({ side, qty, px, reason });
+    // 決済した取引は約定処理が終わってから通知（ドテン後のポジション状態も確定している）
+    if (this.pendingTrades) { const list = this.pendingTrades; this.pendingTrades = null; for (const t of list) this.hooks?.trade?.(t); }
     this.markEquity();
     this.version++;
   }
@@ -98,18 +110,24 @@ export class Account {
 
   placeOrder(o) {
     if (!Number.isFinite(o.price) || !(o.qty > 0)) { this.note('注文の価格・数量が正しくありません'); return null; }
+    this.hooks?.op?.('order_place', { side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl ?? null, tp: o.tp ?? null });
     const ord = { id: seq++, side: o.side, type: o.type, price: o.price, qty: o.qty, sl: Number.isFinite(o.sl) ? o.sl : null, tp: Number.isFinite(o.tp) ? o.tp : null, t: this.t, comment: o.comment || '' };
     this.orders.push(ord);
     this.version++;
     return ord;
   }
-  cancelOrder(id) { this.orders = this.orders.filter((o) => o.id !== id); this.version++; }
+  cancelOrder(id) { const o = this.orders.find((x) => x.id === id); if (o) this.hooks?.op?.('order_cancel', { side: o.side, type: o.type, price: o.price }); this.orders = this.orders.filter((o) => o.id !== id); this.version++; }
   cancelAll() { if (this.orders.length) { this.orders = []; this.version++; } }
-  modifyOrder(id, patch) { const o = this.orders.find((x) => x.id === id); if (o) { Object.assign(o, patch); this.version++; } }
+  modifyOrder(id, patch) { const o = this.orders.find((x) => x.id === id); if (o) { this.hooks?.op?.('order_modify', { side: o.side, type: o.type, from: o.price, ...patch }); Object.assign(o, patch); this.version++; } }
   setBrackets(sl, tp) {
     if (!this.pos.qty) return;
-    if (sl !== undefined) this.pos.sl = Number.isFinite(sl) ? sl : null;
-    if (tp !== undefined) this.pos.tp = Number.isFinite(tp) ? tp : null;
+    const p = this.pos, before = { sl: p.sl, tp: p.tp };
+    if (sl !== undefined) p.sl = Number.isFinite(sl) ? sl : null;
+    if (tp !== undefined) p.tp = Number.isFinite(tp) ? tp : null;
+    if (p.initSL == null && p.sl != null) p.initSL = p.sl;
+    if (p.initTP == null && p.tp != null) p.initTP = p.tp;
+    if (before.sl !== p.sl) this.hooks?.op?.('sl_change', { from: before.sl, to: p.sl });
+    if (before.tp !== p.tp) this.hooks?.op?.('tp_change', { from: before.tp, to: p.tp });
     this.version++;
   }
   closePosition(reason = '決済', qty) {
