@@ -291,7 +291,9 @@ export class Overlay extends Emitter {
     return false;
   }
   hitLine(p) {
-    for (const ln of this.lines) {
+    // 予定ライン（注文パネル）を優先: 既存のラインと重なっても操作できるように
+    const order = [...this.lines.filter((l) => l.draft), ...this.lines.filter((l) => !l.draft)];
+    for (const ln of order) {
       if (ln.closeBox && p.x >= ln.closeBox.x && p.x <= ln.closeBox.x + ln.closeBox.w && Math.abs(p.y - ln.y) < 10) return { line: ln, btn: 'close' };
       if (ln.labelBox && p.x >= ln.labelBox.x && p.x <= ln.labelBox.x + ln.labelBox.w && Math.abs(p.y - ln.y) < 10) return { line: ln };
       if (ln.drag && Math.abs(p.y - ln.y) < 4) return { line: ln };
