@@ -371,7 +371,10 @@ export class Ticket {
   defaultBracket(k) {
     const e = this.entryPx(); if (e == null) return;
     const sym = this.app.sym;
-    const dist = sym.pip ? sym.pip * 20 : e * 0.01;
+    let dist = sym.pip ? sym.pip * 20 : e * 0.01;
+    // 初期位置がチャートの表示範囲からはみ出さないようにする（利確は損切りの2倍の距離）
+    const cv = this.app.cv, h = cv.paneRect?.().h;
+    if (h) { const span = Math.abs(cv.priceOfY(0) - cv.priceOfY(h)); if (span > 0) dist = Math.min(dist, span * 0.18); }
     if (k === 'sl' && this.useSL && !this.slIn.value) this.slIn.value = this.fmtP(e - this.side * dist);
     if (k === 'tp' && this.useTP && !this.tpIn.value) this.tpIn.value = this.fmtP(e + this.side * dist * 2);
   }
