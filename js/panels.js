@@ -319,8 +319,8 @@ export class Ticket {
     const r = this.root;
     r.innerHTML = '';
     this.symEl = el('div', { class: 'tk-sym' });
-    this.sellBtn = el('button', { class: 'tk-side sell', onclick: () => { this.side = -1; this.sync(); } });
-    this.buyBtn = el('button', { class: 'tk-side buy', onclick: () => { this.side = 1; this.sync(); } });
+    this.sellBtn = el('button', { class: 'tk-side sell', onclick: () => this.setSide(-1) });
+    this.buyBtn = el('button', { class: 'tk-side buy', onclick: () => this.setSide(1) });
     this.spreadEl = el('div', { class: 'tk-spread' });
     this.typeTabs = tabs(['成行', '指値', '逆指値'], (i) => { this.type = ['market', 'limit', 'stop'][i]; if (i) this.priceIn.value = this.fmtP(this.app.price() ?? 0); this.sync(); });
     this.priceIn = el('input', { type: 'number', class: 'tk-in' });
@@ -329,8 +329,8 @@ export class Ticket {
     this.qtyBtns = el('div', { class: 'tk-qbtns' });
     this.pctBtns = el('div', { class: 'tk-pct' }, el('span', {}, '資金の'),
       ...[10, 25, 50, 75, 100].map((p) => el('button', { class: 'mini', title: `有効証拠金の ${p}% を証拠金に使う数量（取引金額 = 資金 × ${p}% × レバレッジ）`, onclick: () => this.pctQty(p / 100) }, p + '%')));
-    this.slChk = el('input', { type: 'checkbox', onchange: (e) => { this.useSL = e.target.checked; this.defaultBracket('sl'); this.sync(); } });
-    this.tpChk = el('input', { type: 'checkbox', onchange: (e) => { this.useTP = e.target.checked; this.defaultBracket('tp'); this.sync(); } });
+    this.slChk = el('input', { type: 'checkbox', title: 'オンにするとチャートに損切りのラインが出て、ドラッグで価格を決められます', onchange: (e) => this.toggleBracket('sl', e.target.checked) });
+    this.tpChk = el('input', { type: 'checkbox', title: 'オンにするとチャートに利確のラインが出て、ドラッグで価格を決められます', onchange: (e) => this.toggleBracket('tp', e.target.checked) });
     this.slIn = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
     this.tpIn = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
     this.slInfo = el('small', { class: 'tk-info dn' });
@@ -441,8 +441,45 @@ export class Ticket {
     const e = this.entryPx();
     if (sl != null && (sl - e) * this.side >= 0) { toast('損切り価格が逆です（買いなら建値より下）', 'err'); return; }
     if (tp != null && (tp - e) * this.side <= 0) { toast('利確価格が逆です（買いなら建値より上）', 'err'); return; }
-    if (this.type === 'market') this.app.marketOrder(this.side, q, { sl, tp });
-    else this.app.pendingOrder({ side: this.side, type: this.type, price: clamp(+this.priceIn.value, 0, Infinity), qty: q, sl, tp });
+    const ok = this.type === 'market' ? this.app.marketOrder(this.side, q, { sl, tp }) : this.app.pendingOrder({ side: this.side, type: this.type, price: clamp(+this.priceIn.value, 0, Infinity), qty: q, sl, tp });
+    // 発注できたら予定ラインは片付ける（次の注文でまた有効にする）
+    if (ok) { this.toggleBracket('sl', false); this.toggleBracket('tp', false); }
     void sym;
+  }
+  setSide(side) {
+    if (side === this.side) return;
+    this.side = side;
+    // 売買を切り替えたら、損切り・利確を新しい向きの初期位置に置き直す
+    for (const k of ['sl', 'tp']) if (k === 'sl' ? this.useSL : this.useTP) { (k === 'sl' ? this.slIn : this.tpIn).value = ''; this.defaultBracket(k); }
+    this.sync();
+  }
+  toggleBracket(k, on) {
+    if (k === 'sl') { this.useSL = on; this.slChk.checked = on; if (!on) this.slIn.value = ''; }
+    else if (k === 'tp') { this.useTP = on; this.tpChk.checked = on; if (!on) this.tpIn.value = ''; }
+    if (on) this.defaultBracket(k);
+    this.sync();
+  }
+  // チャートでドラッグした価格を反映
+  setDraft(k, price) {
+    if (!Number.isFinite(price)) return;
+    const v = this.fmtP(price);
+    if (k === 'sl') this.slIn.value = v;
+    else if (k === 'tp') this.tpIn.value = v;
+    else if (k === 'entry') this.priceIn.value = v;
+    this.sync(true);
+  }
+  // チャートに出す予定ライン
+  drafts() {
+    const a = this.app, sym = a.sym;
+    if (!a.canTrade()) return [];
+    const e = this.entryPx(), q = this.qty(), out = [];
+    if (!Number.isFinite(e)) return out;
+    const dist = (p) => (sym.pip ? `${fmtNum(Math.abs(p - e) / sym.pip, 1)}pips` : `${fmtNum((Math.abs(p - e) / e) * 100, 2)}%`);
+    const amt = (p) => smoney((p - e) * q * this.side, sym);
+    const tn = { limit: '指値', stop: '逆指値' }[this.type];
+    if (tn) out.push({ k: 'entry', price: e, color: this.side > 0 ? '#2962ff' : '#f23645', text: `${this.side > 0 ? '買い' : '売り'}${tn}（予定）${fmtNum(q, qtyDigits(sym))}` });
+    if (this.useTP && this.tpIn.value) { const p = +this.tpIn.value; out.push({ k: 'tp', price: p, color: '#089981', text: `利確（予定） ${amt(p)}・${dist(p)}` }); }
+    if (this.useSL && this.slIn.value) { const p = +this.slIn.value; out.push({ k: 'sl', price: p, color: '#f23645', text: `損切り（予定） ${amt(p)}・${dist(p)}` }); }
+    return out;
   }
 }

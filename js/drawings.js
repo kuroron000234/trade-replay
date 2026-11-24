@@ -157,7 +157,7 @@ export class Overlay extends Emitter {
     this.mouse = p;
     const dr = this.drag;
     if (dr.kind === 'placing') { dr.d.pts[1] = this.toTP(p); return; }
-    if (dr.kind === 'line') { dr.price = this.cv.priceOfY(p.y); return; }
+    if (dr.kind === 'line') { dr.price = this.cv.priceOfY(p.y); if (dr.line.draft && dr.price != null) this.emit('lineDrag', dr.line, dr.price); return; }
     if (dr.kind === 'drawing') {
       const d = dr.d, o = dr.orig;
       if (dr.handle != null) {
@@ -433,6 +433,8 @@ export class Overlay extends Emitter {
       for (const o of acc.orders) out.push({ kind: 'order', acc, own, order: o, price: o.price, color: o.side > 0 ? C.blue : C.dn, dash: true, text: `${own ? '' : '◆ '}${o.side > 0 ? '買' : '売'}${o.type === 'limit' ? '指値' : '逆指値'} ${fmtNum(o.qty, qtyDigits(acc.sym))}`, close: own, drag: own });
     };
     add(manual, true);
+    // 注文パネルで利確・損切りを有効にしているときの「予定」ライン（ドラッグで価格を決める）
+    for (const d of this.app.ticket?.drafts?.() || []) out.push({ kind: 'draft-' + d.k, draft: d.k, price: d.price, color: d.color, dash: true, own: true, text: d.text, close: d.k !== 'entry', drag: true });
     add(strategy, false);
     void dig;
     return out;

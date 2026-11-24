@@ -370,15 +370,17 @@ class App {
     this.recorder.op('order_market', { side, qty, sl: br.sl ?? null, tp: br.tp ?? null });
     const err = this.manual.market(side, qty, { sl: br.sl, tp: br.tp, reason: side > 0 ? '成行買い' : '成行売り' });
     if (err) toast(err, 'err');
+    return !err;
   }
   pendingOrder(o) {
-    if (!this.canTrade()) { toast('リプレイ中のみ取引できます', 'err'); return; }
+    if (!this.canTrade()) { toast('リプレイ中のみ取引できます', 'err'); return false; }
     const bid = this.price(), ask = bid + this.spread();
     const px = o.side > 0 ? ask : bid;
-    if (o.type === 'limit' && (o.side > 0 ? o.price >= px : o.price <= px)) { toast('指値が現在値より不利です。成行か逆指値を使ってください', 'err'); return; }
-    if (o.type === 'stop' && (o.side > 0 ? o.price <= px : o.price >= px)) { toast('逆指値が現在値より有利です。成行か指値を使ってください', 'err'); return; }
+    if (o.type === 'limit' && (o.side > 0 ? o.price >= px : o.price <= px)) { toast('指値が現在値より不利です。成行か逆指値を使ってください', 'err'); return false; }
+    if (o.type === 'stop' && (o.side > 0 ? o.price <= px : o.price >= px)) { toast('逆指値が現在値より有利です。成行か指値を使ってください', 'err'); return false; }
     this.manual.placeOrder(o);
     toast(`${o.side > 0 ? '買い' : '売り'}${o.type === 'limit' ? '指値' : '逆指値'} を ${fmtNum(o.price, this.sym.digits)} に置きました`);
+    return true;
   }
   closePosition(frac = 1) {
     const a = this.manual; if (!a?.pos.qty) return;
@@ -401,7 +403,9 @@ class App {
     ov.on('tool', (t) => document.querySelectorAll('#tools .tool').forEach((b) => b.classList.toggle('on', b.dataset.tool === t)));
     ov.on('pickStart', (t) => this.startReplay(alignTF(t, this.tf, this.off()) + this.tf));
     ov.on('pickCancel', () => this.cancelPick());
+    ov.on('lineDrag', (ln, price) => this.ticket.setDraft(ln.draft, price));
     ov.on('lineMove', (ln, price) => {
+      if (ln.draft) { this.ticket.setDraft(ln.draft, price); return; }
       const a = this.manual; if (!a || ln.acc !== a) return;
       const p = a.pos, long = p.qty > 0, bid = this.price();
       price = +price.toFixed(this.sym.digits);
@@ -417,6 +421,7 @@ class App {
       }
     });
     ov.on('lineClose', (ln) => {
+      if (ln.draft) { this.ticket.toggleBracket(ln.draft, false); return; }
       const a = this.manual; if (!a || ln.acc !== a) return;
       if (ln.kind === 'pos') a.closePosition('手動決済');
       else if (ln.kind === 'sl') a.setBrackets(null, undefined);
