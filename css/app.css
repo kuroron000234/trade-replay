@@ -257,6 +257,7 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 3px
 .msg { max-width: 860px; line-height: 1.6; font-size: 13px; }
 .msg.user { align-self: flex-end; background: rgba(41,98,255,.15); border: 1px solid rgba(41,98,255,.35); padding: 6px 10px; border-radius: 8px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
 .msg.assistant { background: var(--panel); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; }
+.msg .tool-line { font-size: 11px; color: var(--muted, #888); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 2px 0; }
 .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 10px 0 4px; font-size: 14px; }
 .msg.assistant p { margin: 4px 0; }
 .msg.assistant ul, .msg.assistant ol { margin: 4px 0; padding-left: 20px; }

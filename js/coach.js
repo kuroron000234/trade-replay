@@ -2,8 +2,8 @@
 // （GitHub Pages など、サーバーがない環境では Windows 版を案内する）
 // Windows 版で Claude Code が未導入・未ログインなら、インストールとログインを案内する
 import { el, store, toast, fmtNum, fmtTime } from './util.js';
-import { toAIText, marketContext, summarize } from './journal.js';
-import { STRATEGY_API, compile } from './strategy.js';
+import { toAIText, marketContext, summarize, toCSV, jdb, fmtISO } from './journal.js';
+import { STRATEGY_API, PRESETS, compile } from './strategy.js';
 import { modal } from './ui.js';
 
 export const MODELS = [
@@ -76,7 +76,7 @@ export class Coach {
     this.info = j;
     this.available = !!j?.available;
     this.status.className = 'muted';
-    if (this.available) this.status.textContent = j.host === 'desktop' ? 'この PC の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）' : 'Cloud Shell の Claude Code を使います（ツールは使わず、記録を読んで答えるだけ）';
+    if (this.available) this.status.textContent = j.host === 'desktop' ? 'この PC の Claude Code を使います（取引の記録やチャートをファイルで渡し、Claude が自由に調べます）' : 'Cloud Shell の Claude Code を使います（取引の記録やチャートをファイルで渡し、Claude が自由に調べます）';
     else if (j?.host === 'desktop') this.status.textContent = '準備が必要です（下の案内に従ってください）';
     else if (j) this.status.textContent = 'Claude Code が見つかりません';
     else this.status.textContent = 'このページでは使えません（Windows 版で使えます）';
@@ -231,7 +231,7 @@ export class Coach {
       const r = await fetch(API, {
         method: 'POST', signal: this.ctrl.signal,
         headers: { ...HDR, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: content, session: this.session, model: this.model.value, effort, mode: this.mode }),
+        body: JSON.stringify({ prompt: content, session: this.session, model: this.model.value, effort, mode: this.mode, files: await this.workspace().catch(() => null) }),
       });
       if (!r.ok) throw new Error('サーバーエラー (' + r.status + ')');
       const reader = r.body.getReader(), dec = new TextDecoder();
@@ -247,6 +247,7 @@ export class Coach {
           const m = JSON.parse(line);
           if (m.t === 'start') this.session = m.session;
           else if (m.t === 'text') { text += m.v; out.innerHTML = md(text); this.log.scrollTop = this.log.scrollHeight; }
+          else if (m.t === 'tool') { text += `${text && !text.endsWith('\n') ? '\n' : ''}${TOOL}${m.v}\n\n`; out.innerHTML = md(text); this.log.scrollTop = this.log.scrollHeight; }
           else if (m.t === 'done') done = m;
           else if (m.t === 'error') err = m.v;
         }
@@ -266,6 +267,47 @@ export class Coach {
     }
   }
   stop() { try { this.ctrl?.abort(); } catch { /* */ } }
+
+  // ---------- Claude が読めるファイル ----------
+  // 送信のたびに、ブラウザ内の記録や今のチャートをファイルにしてサーバーへ渡す（作業フォルダの data/ に書き出される）
+  async workspace() {
+    const a = this.app, r = a.replay, sym = a.sym, f = {};
+    const json = (v) => JSON.stringify(v, null, 1);
+    const trades = await a.recorder.loadAll().catch(() => []);
+    const sessions = await jdb.all('sessions').catch(() => []);
+    let events = await jdb.all('events').catch(() => []);
+    if (events.length > 50000) events = events.slice(-50000);
+    f['trades.json'] = json(trades);
+    f['trades.csv'] = toCSV(trades);
+    f['sessions.json'] = json(sessions);
+    f['events.json'] = json(events);
+    f['STRATEGY_API.md'] = STRATEGY_API;
+    for (const p of PRESETS) f[`strategies/preset-${p.id}.js`] = p.code;
+    a.customStrategies().forEach((c, i) => { f[`strategies/custom-${i + 1}-${c.id}.js`] = c.code; });
+    const bars = a.inReplay() ? r.closedBars() : r.bars;
+    f['chart/bars.csv'] = 'time,unix,open,high,low,close,volume\n' + bars.map((b) => [fmtISO(b.t), b.t, b.o, b.h, b.l, b.c, b.v ?? ''].join(',')).join('\n');
+    f['chart/state.json'] = json({
+      symbol: sym, timeframeMinutes: r.tf / 60, inReplay: a.inReplay(), replayTime: a.inReplay() ? fmtISO(r.T) : null, lastPrice: r.lastPrice,
+      account: a.accountCfg(), live: a.inReplay() ? this.liveState() : null, strategy: a.strat ? { name: a.strat.compiled?.name, inputs: a.strat.inputs, error: a.strat.error || null } : null,
+    });
+    if (a.strat && a.bt) {
+      f['backtest/code.js'] = a.strat.code;
+      f['backtest/result.json'] = json({ name: a.strat.compiled?.name, inputs: a.strat.inputs, symbol: sym.id, timeframeMinutes: r.tf / 60, bars: a.bt.bars.length,
+        from: a.bt.bars[0] ? fmtISO(a.bt.bars[0].t) : null, to: a.bt.bars.length ? fmtISO(a.bt.bars[a.bt.bars.length - 1].t) : null, stats: a.bt.acc.stats(), error: a.strat.error || null });
+      f['backtest/trades.json'] = json(a.bt.acc.trades);
+    }
+    f['README.md'] = [
+      '# Trade Replay から送られたデータ（メッセージを送るたびに最新に置き換わります）',
+      '時刻は日本時間の文字列（time / *Time）と UNIX 秒（unix / t / entryT / exitT）。',
+      `- trades.json / trades.csv: 手動・自動売買の全取引の記録（${trades.length} 件。建玉時・決済時の相場状況 ctxEntry/ctxExit、保有中の操作 ops、メモ・タグを含む）`,
+      `- sessions.json: リプレイのセッション（${sessions.length} 件）`,
+      `- events.json: 操作ログ（注文・損切り変更など。直近 ${events.length} 件）`,
+      '- STRATEGY_API.md: ストラテジーの書き方。strategies/ にプリセットと自作のコード',
+      `- chart/bars.csv: 今のチャートの足（${sym.id}・${r.tf / 60}分足・${bars.length} 本${a.inReplay() ? '。リプレイ中なので現在時刻までの確定足だけ' : ''}）。chart/state.json: 銘柄の設定・口座・現在の状況`,
+      a.bt ? `- backtest/: 今チャートで回しているストラテジーのコード・成績・全取引（${a.bt.acc.trades.length} 件）` : '- backtest/: （今はストラテジーを回していないのでありません）',
+    ].join('\n');
+    return f;
+  }
 
   // ---------- ルール作り ----------
   rulesContext() {
@@ -360,6 +402,7 @@ export class Coach {
   }
 }
 
+const TOOL = '\u2063⚙ ';
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
 // 最低限の Markdown 表示（エスケープしてから整形）
 function md(src) {
@@ -385,6 +428,7 @@ function md(src) {
       if (list) { html += `</${list}>`; list = null; }
       const h = l.match(/^(#{1,4})\s+(.*)/);
       if (h) html += `<h${h[1].length + 2}>${inline(h[2])}</h${h[1].length + 2}>`;
+      else if (l.startsWith(TOOL)) html += `<div class="tool-line">${l.slice(1)}</div>`;
       else if (l.trim() === '---') html += '<hr>';
       else if (l.trim()) html += `<p>${inline(l)}</p>`;
     }
