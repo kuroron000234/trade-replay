@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -240,7 +241,11 @@ func (s *setupState) append(b []byte) {
 
 type logWriter struct{}
 
-func (logWriter) Write(b []byte) (int, error) { setup.append(b); os.Stdout.Write(b); return len(b), nil }
+func (logWriter) Write(b []byte) (int, error) {
+	setup.append(b)
+	os.Stdout.Write(b)
+	return len(b), nil
+}
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	claude := findClaude()
@@ -340,13 +345,14 @@ func handleCoach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Prompt  string `json:"prompt"`
-		Session string `json:"session"`
-		Model   string `json:"model"`
-		Effort  string `json:"effort"`
-		Mode    string `json:"mode"`
+		Prompt  string            `json:"prompt"`
+		Session string            `json:"session"`
+		Model   string            `json:"model"`
+		Effort  string            `json:"effort"`
+		Mode    string            `json:"mode"`
+		Files   map[string]string `json:"files"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 5_000_000)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 200_000_000)).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "bad request"})
 		return
 	}
@@ -363,8 +369,14 @@ func handleCoach(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "rules" {
 		sys = prompts["rules"]
 	}
+	sys += prompts["workspace"]
+	if err := writeWorkspace(req.Files); err != nil {
+		writeJSON(w, 500, map[string]any{"error": "データを書き出せませんでした: " + err.Error()})
+		return
+	}
+	// 普段の Claude Code と同じツールを auto モード（安全な操作は自動で許可）で使う
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--tools", "", "--strict-mcp-config", "--system-prompt", sys}
+		"--permission-mode", "auto", "--system-prompt", sys}
 	if models[req.Model] && req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
@@ -415,6 +427,15 @@ func handleCoach(w http.ResponseWriter, r *http.Request) {
 			if ev["type"] == "content_block_delta" && d["type"] == "text_delta" {
 				out(map[string]any{"t": "text", "v": d["text"]})
 			}
+		case "assistant":
+			msg, _ := j["message"].(map[string]any)
+			content, _ := msg["content"].([]any)
+			for _, c := range content {
+				if b, _ := c.(map[string]any); b["type"] == "tool_use" {
+					in, _ := b["input"].(map[string]any)
+					out(map[string]any{"t": "tool", "v": toolLabel(fmt.Sprint(b["name"]), in)})
+				}
+			}
 		case "system":
 			if j["subtype"] == "init" {
 				out(map[string]any{"t": "start", "session": j["session_id"], "model": j["model"]})
@@ -436,4 +457,47 @@ func handleCoach(w http.ResponseWriter, r *http.Request) {
 			out(map[string]any{"t": "error", "v": msg})
 		}
 	}
+}
+
+// ---------- Claude に読ませるファイル ----------
+
+var safePath = regexp.MustCompile(`^[\w\-]+(/[\w\-]+)*\.\w+$`)
+var workspaceMu sync.Mutex
+
+// ブラウザから届いた記録やチャートを作業フォルダの data/ に書き出す（毎回作り直す）
+func writeWorkspace(files map[string]string) error {
+	if files == nil {
+		return nil
+	}
+	workspaceMu.Lock()
+	defer workspaceMu.Unlock()
+	dir := filepath.Join(coachDir, "data")
+	os.RemoveAll(dir)
+	for name, text := range files {
+		if !safePath.MatchString(name) {
+			continue
+		}
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 画面に出す 1 行の説明（例: Bash: python3 ...）
+func toolLabel(name string, in map[string]any) string {
+	for _, k := range []string{"description", "command", "file_path", "pattern", "query", "url"} {
+		if v, ok := in[k].(string); ok && v != "" {
+			v = strings.Join(strings.Fields(v), " ")
+			if r := []rune(v); len(r) > 160 {
+				v = string(r[:160])
+			}
+			return name + ": " + v
+		}
+	}
+	return name
 }
