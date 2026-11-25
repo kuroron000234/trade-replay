@@ -1,4 +1,5 @@
 // デモ口座（ネッティング方式: 銘柄ごとに1ポジション、反対売買で決済・ドテン）
+// 取引所と同じく、決済専用（reduce-only）の指値・逆指値で一部だけ利確・損切りでき、トレーリングストップも使える
 // 価格は Bid 基準。買いは Ask(=Bid+スプレッド) で約定する。
 
 let seq = 1;
@@ -12,7 +13,7 @@ export class Account {
   }
   reset() {
     this.balance = this.cfg.balance;
-    this.pos = { qty: 0, avg: 0, sl: null, tp: null, t: 0, fee: 0 };
+    this.pos = { qty: 0, avg: 0, sl: null, tp: null, trail: null, t: 0, fee: 0 };
     this.orders = [];
     this.trades = [];
     this.execs = [];
@@ -43,6 +44,7 @@ export class Account {
 
   // 新規分の証拠金チェック
   canTrade(side, qty, px) {
+    if (!(qty > 0)) return false;
     const after = Math.abs(this.pos.qty + side * qty);
     if (after <= Math.abs(this.pos.qty)) return true;
     return (after * px) / this.cfg.leverage <= this.equity() + 1e-9;
@@ -65,13 +67,13 @@ export class Account {
       const exitFee = (fee * cq) / qty;
       p.fee -= entryFee;
       this.balance += pnl;
-      const tr = { id: seq++, dir, qty: cq, entry: p.avg, exit: px, entryT: p.t, exitT: this.t, pnl: pnl - entryFee - exitFee, gross: pnl, fees: entryFee + exitFee, reason, mae: p.mae, mfe: p.mfe,
+      const tr = { id: seq++, dir, qty: cq, entry: p.avg, exit: px, entryT: p.t, exitT: this.t, pnl: pnl - entryFee - exitFee, gross: pnl, fees: entryFee + exitFee, reason, mae: p.mae * (cq / Math.abs(p.qty)), mfe: p.mfe * (cq / Math.abs(p.qty)), partial: cq < Math.abs(p.qty) - 1e-12,
         posId: p.id, ctx: p.ctx, entryReason: p.entryReason, initSL: p.initSL, initTP: p.initTP, openEquity: p.openEquity, slAtExit: p.sl, tpAtExit: p.tp };
       this.trades.push(tr);
       this.pendingTrades = (this.pendingTrades || []).concat(tr);
       p.qty += side * cq;
       remain -= cq;
-      if (Math.abs(p.qty) < 1e-12) { p.qty = 0; p.avg = 0; p.sl = p.tp = null; p.fee = 0; }
+      if (Math.abs(p.qty) < 1e-12) { p.qty = 0; p.avg = 0; p.sl = p.tp = p.trail = null; p.fee = 0; }
     }
     if (remain > 1e-12) {
       const fresh = !p.qty;
@@ -80,7 +82,7 @@ export class Account {
       p.qty += side * remain;
       p.fee += (fee * remain) / qty;
       if (fresh) {
-        p.t = this.t; p.sl = null; p.tp = null; p.mae = 0; p.mfe = 0;
+        p.t = this.t; p.sl = null; p.tp = null; p.trail = null; p.mae = 0; p.mfe = 0;
         p.id = seq++; p.entryReason = reason; p.openEquity = eqBefore; p.initSL = p.initTP = null;
         p.ctx = this.hooks?.context ? this.hooks.context() : null;
       }
@@ -88,7 +90,20 @@ export class Account {
     if (p.qty && Math.sign(p.qty) === side) {
       if (Number.isFinite(extra.sl)) p.sl = extra.sl;
       if (Number.isFinite(extra.tp)) p.tp = extra.tp;
+      if (extra.trail > 0) p.trail = extra.trail;
+      // 分割利確: 今回建てた数量を割合で分け、決済専用の指値にする（合計が 100% なら最後の段は端数ごと残り全部）
+      if (remain > 1e-12 && Array.isArray(extra.tps) && extra.tps.length) {
+        let left = remain, cum = 0;
+        extra.tps.forEach((x, i) => {
+          cum += x.pct;
+          if (!Number.isFinite(x.price) || left <= 1e-12) return;
+          const q = i === extra.tps.length - 1 && cum >= 99.5 ? left : Math.min(left, this.roundQty((remain * x.pct) / 100));
+          if (q > 0) { this.placeOrder({ side: -side, type: 'limit', price: x.price, qty: q, reduceOnly: true, label: `利確${extra.tps.length > 1 ? i + 1 : ''}` }); left -= q; }
+        });
+      }
     }
+    // ポジションが無くなった・向きが変わったら、前のポジション用の決済注文は取り消す（取引所と同じ）
+    if (this.orders.some((o) => o.reduceOnly && (!p.qty || o.side === Math.sign(p.qty)))) this.orders = this.orders.filter((o) => !(o.reduceOnly && (!p.qty || o.side === Math.sign(p.qty))));
     if (p.qty) { if (p.initSL == null && p.sl != null) p.initSL = p.sl; if (p.initTP == null && p.tp != null) p.initTP = p.tp; }
     this.hooks?.fill?.({ side, qty, px, reason });
     // 決済した取引は約定処理が終わってから通知（ドテン後のポジション状態も確定している）
@@ -96,6 +111,8 @@ export class Account {
     this.markEquity();
     this.version++;
   }
+
+  roundQty(q) { const st = this.sym.qtyStep || 1e-8; return Math.max(st, Math.round(q / st) * st); }
 
   // 成行（手動）: 現在値で即約定
   market(side, qty, extra = {}) {
@@ -110,8 +127,10 @@ export class Account {
 
   placeOrder(o) {
     if (!Number.isFinite(o.price) || !(o.qty > 0)) { this.note('注文の価格・数量が正しくありません'); return null; }
-    this.hooks?.op?.('order_place', { side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl ?? null, tp: o.tp ?? null });
-    const ord = { id: seq++, side: o.side, type: o.type, price: o.price, qty: o.qty, sl: Number.isFinite(o.sl) ? o.sl : null, tp: Number.isFinite(o.tp) ? o.tp : null, t: this.t, comment: o.comment || '' };
+    if (o.reduceOnly && (!this.pos.qty || Math.sign(this.pos.qty) === o.side)) { this.note('決済注文は、反対向きのポジションがあるときだけ置けます'); return null; }
+    this.hooks?.op?.('order_place', { side: o.side, type: o.type, price: o.price, qty: o.qty, sl: o.sl ?? null, tp: o.tp ?? null, reduceOnly: !!o.reduceOnly });
+    const ord = { id: seq++, side: o.side, type: o.type, price: o.price, qty: o.qty, sl: Number.isFinite(o.sl) ? o.sl : null, tp: Number.isFinite(o.tp) ? o.tp : null, t: this.t, comment: o.comment || '',
+      reduceOnly: !!o.reduceOnly, label: o.label || '', tps: Array.isArray(o.tps) && o.tps.length ? o.tps : null, trail: o.trail > 0 ? o.trail : null };
     this.orders.push(ord);
     this.version++;
     return ord;
@@ -129,6 +148,24 @@ export class Account {
     if (before.sl !== p.sl) this.hooks?.op?.('sl_change', { from: before.sl, to: p.sl });
     if (before.tp !== p.tp) this.hooks?.op?.('tp_change', { from: before.tp, to: p.tp });
     this.version++;
+  }
+  // トレーリングストップ: 有利な方向の最高値（売りは最安値）から dist 離れた位置に損切りを付けて追いかける
+  setTrail(dist) {
+    const p = this.pos;
+    if (!p.qty) return;
+    const d = dist > 0 ? dist : null;
+    if (d === p.trail) return;
+    this.hooks?.op?.('trail_change', { from: p.trail, to: d });
+    p.trail = d;
+    if (d) this.updateTrail(p.qty > 0 ? this.bid : this.ask);
+    this.version++;
+  }
+  updateTrail(px) {
+    const p = this.pos;
+    if (!p.trail || !p.qty || px == null) return;
+    const dg = this.sym.digits ?? 8;
+    const ns = +(p.qty > 0 ? px - p.trail : px + p.trail).toFixed(dg);
+    if (p.sl == null || (p.qty > 0 ? ns > p.sl : ns < p.sl)) { p.sl = ns; if (p.initSL == null) p.initSL = ns; this.version++; }
   }
   closePosition(reason = '決済', qty) {
     const p = this.pos;
@@ -195,7 +232,12 @@ export class Account {
         this.orders = this.orders.filter((x) => x !== o);
         // 指値は指定値より不利には約定しない
         const fpx = best.isLimit ? (o.side > 0 ? Math.min(px, o.price) : Math.max(px, o.price)) : px;
-        if (this.canTrade(o.side, o.qty, fpx)) this.fill(o.side, o.qty, fpx, o.type === 'limit' ? '指値' : '逆指値', { sl: o.sl, tp: o.tp });
+        if (o.reduceOnly) {
+          // 決済専用: ポジションを減らすだけ（持っている数量を超えた分は約定しない）
+          const q = Math.min(o.qty, Math.abs(this.pos.qty));
+          if (this.pos.qty && Math.sign(this.pos.qty) !== o.side && q > 0) this.fill(o.side, q, fpx, (o.label || (o.type === 'limit' ? '利確' : '損切り')) + (q < Math.abs(this.pos.qty) ? '（一部）' : ''));
+          else this.version++;
+        } else if (this.canTrade(o.side, o.qty, fpx)) this.fill(o.side, o.qty, fpx, o.type === 'limit' ? '指値' : '逆指値', { sl: o.sl, tp: o.tp, tps: o.tps, trail: o.trail });
         else { this.note('証拠金不足で注文を取り消しました'); this.version++; }
       } else {
         const p = this.pos;
@@ -205,6 +247,8 @@ export class Account {
       from = bestPx;
     }
     this.bid = b1;
+    // 区間の中で値は単調に動くので、区間の終わりで追いかければ足の中の順序どおりになる
+    if (this.pos.trail) this.updateTrail(this.pos.qty > 0 ? Math.max(b0, b1) : Math.min(b0, b1) + this.cfg.spread);
     // 含み損益の最大・最小
     const p = this.pos;
     if (p.qty) {

@@ -123,7 +123,8 @@ export class StrategyRunner {
       ...this.base,
       ta: this.ta, i, bar_index: i, time: this.S.t[i], tf: this.tf, symbol: this.sym.id,
       pip: this.sym.pip || 0, digits: this.sym.digits,
-      position: { size: p.qty, side: Math.sign(p.qty), avg: p.avg, sl: p.sl, tp: p.tp, profit: acc.unrealized() },
+      position: { size: p.qty, side: Math.sign(p.qty), avg: p.avg, sl: p.sl, tp: p.tp, trail: p.trail, profit: acc.unrealized() },
+      exitOrders: acc.orders.filter((o) => o.reduceOnly).map((o) => ({ type: o.type, price: o.price, qty: o.qty, comment: o.label })),
       equity: acc.equity(), balance: acc.balance,
       v,
       entry(dir, o = {}) {
@@ -131,22 +132,36 @@ export class StrategyRunner {
         const qty = o.qty ?? rt.qty;
         if (o.limit != null || o.stop != null) {
           acc.orders.filter((x) => x.comment === 'strategy-entry').forEach((x) => acc.cancelOrder(x.id));
-          acc.placeOrder({ side, type: o.limit != null ? 'limit' : 'stop', price: o.limit ?? o.stop, qty, sl: o.sl, tp: o.tp, comment: 'strategy-entry' });
+          acc.placeOrder({ side, type: o.limit != null ? 'limit' : 'stop', price: o.limit ?? o.stop, qty, sl: o.sl, tp: o.tp, tps: o.tps, trail: o.trail, comment: 'strategy-entry' });
           return;
         }
         const cur = acc.pos.qty + pending();
         if (Math.sign(cur) === side && !o.add) return; // 同方向は追加しない（ピラミッディング無し）
         const q = Math.sign(cur) === -side ? Math.abs(cur) + qty : qty;
-        acc.queueMarket(side, q, { sl: o.sl, tp: o.tp, reason: o.comment || (side > 0 ? '買い' : '売り') });
+        acc.queueMarket(side, q, { sl: o.sl, tp: o.tp, tps: o.tps, trail: o.trail, reason: o.comment || (side > 0 ? '買い' : '売り') });
       },
-      closePosition(comment) {
+      // qty を渡すとその数量だけ（一部決済）。{ pct: 50 } でも指定できる
+      closePosition(comment, qty) {
         const cur = acc.pos.qty + pending();
-        if (cur) acc.queueMarket(-Math.sign(cur), Math.abs(cur), { reason: comment || '決済' });
+        if (!cur) return;
+        let q = Math.abs(cur);
+        if (qty && typeof qty === 'object' && qty.pct > 0) q = Math.min(q, acc.roundQty((q * qty.pct) / 100));
+        else if (qty > 0) q = Math.min(q, qty);
+        acc.queueMarket(-Math.sign(cur), q, { reason: comment || (q < Math.abs(cur) ? '一部決済' : '決済') });
       },
       exit(o = {}) {
-        if (acc.pos.qty) acc.setBrackets(o.sl ?? acc.pos.sl, o.tp ?? acc.pos.tp);
-        for (const q of acc.queued) { if (o.sl != null) q.extra.sl = o.sl; if (o.tp != null) q.extra.tp = o.tp; }
+        if (acc.pos.qty) { acc.setBrackets(o.sl ?? acc.pos.sl, o.tp ?? acc.pos.tp); if (o.trail !== undefined) acc.setTrail(o.trail); }
+        for (const q of acc.queued) { if (o.sl != null) q.extra.sl = o.sl; if (o.tp != null) q.extra.tp = o.tp; if (o.trail != null) q.extra.trail = o.trail; }
       },
+      // 決済専用の指値（limit）・逆指値（stop）。ポジションの一部（qty か pct）だけ決済できる
+      exitOrder(o = {}) {
+        const p = acc.pos;
+        if (!p.qty || (o.limit == null && o.stop == null)) return;
+        const all = Math.abs(p.qty);
+        const qty = o.qty > 0 ? Math.min(o.qty, all) : o.pct > 0 ? Math.min(all, acc.roundQty((all * o.pct) / 100)) : all;
+        acc.placeOrder({ side: -Math.sign(p.qty), type: o.limit != null ? 'limit' : 'stop', price: o.limit ?? o.stop, qty, reduceOnly: true, label: o.comment || '' });
+      },
+      cancelExits() { for (const o of acc.orders.filter((x) => x.reduceOnly)) acc.cancelOrder(o.id); },
       cancel() { acc.cancelAll(); },
       plot(x, title = 'plot', color = '#ffeb3b') {
         let pl = rt.plots.get(title);
@@ -311,7 +326,8 @@ const inputs = {
 //   s.ta.sma(src, len) ema rma wma rsi atr macd bb stoch dmi supertrend donchian ichimoku sar vwap
 //   s.ta.highest(src, len) lowest crossover(a, b) crossunder cross change rising falling
 //   s.entry('long' | 'short', { qty, sl, tp, limit, stop })  次の足の始値で約定（反対ポジションは途転）
-//   s.closePosition()  決済 / s.exit({ sl, tp }) 損切り・利確を設定 / s.cancel() 待機注文を取消
+//   s.closePosition()  決済（s.closePosition('半分', { pct: 50 }) で一部決済）/ s.exit({ sl, tp, trail }) 損切り・利確・トレールを設定
+//   s.exitOrder({ limit | stop, pct | qty })  一部だけ決済する指値・逆指値 / s.cancel() 待機注文を取消
 //   s.position.side (1 / -1 / 0), s.position.avg, s.position.profit / s.equity
 //   s.plot(値, '名前', '#色')  チャートに線を描く / s.log('メッセージ')
 //   入力に qty があれば数量として使われます
@@ -357,8 +373,12 @@ function onBar(s, inp) {
 - s.entry('long' | 'short', { qty, sl, tp, limit, stop, comment, add })
   - 成行は次の足の始値で約定。反対のポジションがあれば途転。同じ向きは積み増ししない（add: true で積み増し）
   - sl / tp は価格。limit / stop を付けると指値・逆指値の待機注文（新しい entry で置き換わる）
-- s.closePosition(comment) 決済 / s.exit({ sl, tp }) 今のポジションの損切り・利確を変更 / s.cancel() 待機注文を取消
-- s.position: { size, side（1 / -1 / 0）, avg, sl, tp, profit }、s.equity、s.balance
+  - tps: [{ price, pct }, …] で分割利確（例: [{ price: a, pct: 50 }, { price: b, pct: 50 }]。最後の段は残り全部）。trail: 幅 でトレーリングストップ
+- s.closePosition(comment, qty) 決済。qty に数量か { pct: 50 } を渡すと一部だけ決済（次の足の始値）
+- s.exit({ sl, tp, trail }) 今のポジションの損切り・利確・トレール幅を変更（trail: null で解除）。トレールは有利な方向の最高値（売りは最安値）から trail 離れた位置に損切りを付けて追いかける
+- s.exitOrder({ limit | stop, pct | qty, comment }) ポジションの一部を決済する決済専用の指値（limit）・逆指値（stop）。ポジションを超えては約定せず、ポジションが無くなると自動で取り消される。毎足呼ぶと注文が積み重なるので、s.exitOrders.length が 0 のときだけ置く。s.cancelExits() でこの注文だけ取消
+- s.cancel() 待機注文をすべて取消
+- s.position: { size, side（1 / -1 / 0）, avg, sl, tp, trail, profit }、s.exitOrders: [{ type, price, qty, comment }]、s.equity、s.balance
 - s.time（足の開始時刻、UTC の秒）。日本時間の時: new Date((s.time + 9 * 3600) * 1000).getUTCHours()、曜日: getUTCDay()
 - s.symbol、s.tf（秒）、s.pip（FX の 1pips の値幅。暗号資産は 0）、s.digits、s.bar_index
 - s.plot(値または系列, '名前', '#色') でチャートに線を描く、s.log('メッセージ')

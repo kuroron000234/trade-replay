@@ -64,13 +64,19 @@ export class TradingPanel {
     const u = acc.unrealized();
     const qd = qtyDigits(sym);
     const pips = sym.pip ? ` (${fmtSigned(((p.qty > 0 ? acc.bid : acc.ask) - p.avg) * Math.sign(p.qty) / sym.pip, 1)} pips)` : '';
-    return table(['銘柄', '売買', '数量', '平均取得価格', '現在値', '損切り', '利確', '評価損益', '保有時間', ''], [[
+    const parts = acc.orders.filter((o) => o.reduceOnly);
+    const partTxt = (type) => parts.filter((o) => o.type === type).map((o) => `${fmtNum(o.price, sym.digits)}×${fmtNum(o.qty, qd)}`).join(' / ');
+    const withParts = (main, type) => { const t = partTxt(type); return t ? el('span', {}, main, el('small', { class: 'muted', title: '一部決済の注文（「注文」タブで変更・取消）' }, ' ＋' + t)) : main; };
+    return table(['銘柄', '売買', '数量', '平均取得価格', '現在値', '損切り', '利確', 'トレール幅', '評価損益', '保有時間', ''], [[
       sym.id, sideTag(p.qty), fmtNum(Math.abs(p.qty), qd), fmtNum(p.avg, sym.digits), fmtNum(p.qty > 0 ? acc.bid : acc.ask, sym.digits),
-      own ? editable(p.sl, sym, (v) => acc.setBrackets(v, undefined)) : fmtOr(p.sl, sym),
-      own ? editable(p.tp, sym, (v) => acc.setBrackets(undefined, v)) : fmtOr(p.tp, sym),
+      withParts(own ? editable(p.sl, sym, (v) => acc.setBrackets(v, undefined)) : fmtOr(p.sl, sym), 'stop'),
+      withParts(own ? editable(p.tp, sym, (v) => acc.setBrackets(undefined, v)) : fmtOr(p.tp, sym), 'limit'),
+      own ? editable(p.trail, sym, (v) => acc.setTrail(v), '価格の幅（例: 損切りを最高値の 500 下に付けて追いかける）。空にすると解除') : fmtOr(p.trail, sym),
       el('span', { class: pnlCls(u) }, smoney(u, sym) + pips), fmtDur(acc.t - p.t),
       own ? el('span', { class: 'row-btns' },
+        el('button', { class: 'mini', onclick: () => closeDialog(this.app), title: '成行・指値・逆指値で、数量や割合を決めて一部だけ決済します' }, '一部決済…'),
         el('button', { class: 'mini', onclick: () => this.app.closePosition(0.5) }, '半分決済'),
+        el('button', { class: 'mini', onclick: () => this.app.breakeven(), title: '損切りを建値（手数料込み）に移します' }, '建値に損切り'),
         el('button', { class: 'mini', onclick: () => this.app.reverse() }, 'ドテン'),
         el('button', { class: 'mini danger', onclick: () => this.app.closePosition() }, '決済')) : '',
     ]]);
@@ -78,10 +84,12 @@ export class TradingPanel {
   orders(acc) {
     const sym = acc.sym, own = acc === this.app.accounts().manual;
     if (!acc.orders.length) return el('div', { class: 'empty' }, '待機中の注文はありません');
+    const tpOf = (o) => (o.tps ? o.tps.map((x) => `${fmtNum(x.price, sym.digits)}(${x.pct}%)`).join(' / ') : fmtOr(o.tp, sym));
     return table(['種類', '売買', '数量', '価格', '損切り', '利確', '発注時刻', ''], acc.orders.map((o) => [
-      o.type === 'limit' ? '指値' : '逆指値', sideTag(o.side), fmtNum(o.qty, qtyDigits(sym)),
+      o.reduceOnly ? el('span', { title: '決済専用（ポジションを減らすだけで、反対のポジションは作りません）' }, `決済${o.type === 'limit' ? '指値' : '逆指値'}${o.label ? '・' + o.label : ''}`) : o.type === 'limit' ? '指値' : '逆指値',
+      sideTag(o.side), fmtNum(o.qty, qtyDigits(sym)),
       own ? editable(o.price, sym, (v) => v != null && acc.modifyOrder(o.id, { price: v })) : fmtNum(o.price, sym.digits),
-      fmtOr(o.sl, sym), fmtOr(o.tp, sym), fmtTime(o.t), own ? el('button', { class: 'mini danger', onclick: () => acc.cancelOrder(o.id) }, '取消') : '',
+      fmtOr(o.sl, sym), tpOf(o), fmtTime(o.t), own ? el('button', { class: 'mini danger', onclick: () => acc.cancelOrder(o.id) }, '取消') : '',
     ]));
   }
   trades(acc) {
@@ -108,8 +116,40 @@ function table(head, rows) {
 }
 const sideTag = (s) => el('span', { class: 'side ' + (s > 0 ? 'buy' : 'sell') }, s > 0 ? '買い' : '売り');
 const fmtOr = (v, sym) => (v == null ? '—' : fmtNum(v, sym.digits));
-function editable(v, sym, set) {
-  const sp = el('span', { class: 'editable', title: 'クリックで変更' }, v == null ? '＋設定' : fmtNum(v, sym.digits));
+// ポジションの一部決済（成行・指値・逆指値。数量は割合か直接入力）
+function closeDialog(app) {
+  const acc = app.accounts().manual, p = acc?.pos, sym = app.sym;
+  if (!p?.qty) return;
+  const all = Math.abs(p.qty), qd = qtyDigits(sym), long = p.qty > 0;
+  let type = 'market';
+  const price = el('input', { type: 'number', class: 'tk-in', step: 10 ** -sym.digits, value: (long ? acc.bid : acc.ask).toFixed(sym.digits) });
+  const qty = el('input', { type: 'number', class: 'tk-in', step: sym.qtyStep, min: sym.qtyStep, max: all, value: (Math.round(all / 2 / sym.qtyStep) * sym.qtyStep).toFixed(qd) });
+  const info = el('div', { class: 'muted' });
+  const priceRow = el('label', { class: 'tk-row' }, el('span', {}, '価格'), price);
+  const upd = () => {
+    priceRow.hidden = type === 'market';
+    const q = Math.min(all, +qty.value || 0), px = type === 'market' ? (long ? acc.bid : acc.ask) : +price.value;
+    info.textContent = q > 0 && px ? `${fmtNum((q / all) * 100, 0)}% を決済 → 確定する損益 ${smoney((px - p.avg) * q * Math.sign(p.qty), sym)} ${sym.quote}${type === 'market' ? '' : '（約定したとき）'}` : '';
+  };
+  price.oninput = qty.oninput = upd;
+  const body = el('div', { class: 'close-dlg' },
+    el('div', { class: 'muted' }, `${long ? '買い' : '売り'} ${fmtNum(all, qd)} @ ${fmtNum(p.avg, sym.digits)}`),
+    tabs(['成行', '指値（利確）', '逆指値（損切り）'], (i) => { type = ['market', 'limit', 'stop'][i]; upd(); }),
+    priceRow,
+    el('label', { class: 'tk-row' }, el('span', {}, '数量'), qty),
+    el('div', { class: 'tk-pct' }, ...[25, 33, 50, 75, 100].map((pc) => el('button', { class: 'mini', onclick: () => { qty.value = (pc === 100 ? all : Math.max(sym.qtyStep, Math.round((all * pc) / 100 / sym.qtyStep) * sym.qtyStep)).toFixed(qd); upd(); } }, pc + '%'))),
+    info);
+  upd();
+  modal('一部決済', body, { width: 380, buttons: [{ label: 'キャンセル' }, { label: '決済する', primary: true, onclick: () => {
+    const q = Math.min(all, +qty.value || 0);
+    if (!(q > 0)) { toast('数量を入れてください', 'err'); return false; }
+    if (type === 'market') { app.recorder.op('close', { qty: q, of: all }); acc.closePosition('手動決済', q); return true; }
+    return app.closeOrder(type, +price.value, 1, q);
+  } }] });
+}
+
+function editable(v, sym, set, title = 'クリックで変更') {
+  const sp = el('span', { class: 'editable', title }, v == null ? '＋設定' : fmtNum(v, sym.digits));
   sp.onclick = () => {
     const inp = el('input', { type: 'number', step: 10 ** -sym.digits, value: v ?? '', class: 'inline' });
     const done = (ok) => { if (ok) set(inp.value === '' ? null : +inp.value); };
@@ -312,7 +352,7 @@ export class Ticket {
     this.root = root;
     this.side = 1;
     this.type = 'market';
-    this.useSL = false; this.useTP = false;
+    this.useSL = false; this.useTP = false; this.useTP2 = false;
     this.build();
   }
   build() {
@@ -335,6 +375,15 @@ export class Ticket {
     this.tpIn = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
     this.slInfo = el('small', { class: 'tk-info dn' });
     this.tpInfo = el('small', { class: 'tk-info up' });
+    // 分割利確: 利確1 で建てた数量の何%を決済するか。100% 未満なら残りを利確2 に置ける
+    this.tpPct = el('select', { class: 'tk-tppct', title: '利確で決済する割合。100% 未満にすると、残りを「利確2」で別の価格に置けます', onchange: () => { if (this.tpPctV() >= 100) this.toggleBracket('tp2', false); this.sync(true); } },
+      ...[100, 75, 50, 33, 25].map((v) => el('option', { value: v }, v + '%')));
+    this.tp2Chk = el('input', { type: 'checkbox', onchange: (e) => this.toggleBracket('tp2', e.target.checked) });
+    this.tp2In = el('input', { type: 'number', class: 'tk-in', oninput: () => this.sync(true) });
+    this.tp2Info = el('small', { class: 'tk-info up' });
+    this.tp2Row = el('div', { class: 'tk-br' }, el('label', { class: 'chk', title: '残りの数量を別の価格で利確します' }, this.tp2Chk, '利確2'), this.tp2In, this.tp2Info);
+    this.reduceChk = el('input', { type: 'checkbox', onchange: () => this.sync() });
+    this.reduceRow = el('label', { class: 'chk tk-reduce', title: '今のポジションを減らすだけの注文です。ポジションを超える分は約定せず、反対のポジションも作りません。ポジションが無くなると自動で取り消されます' }, this.reduceChk, '決済のみ（reduce-only）');
     this.infoEl = el('div', { class: 'tk-sum' });
     this.submit = el('button', { class: 'tk-submit', onclick: () => this.send() });
     this.hint = el('div', { class: 'tk-hint' });
@@ -345,7 +394,9 @@ export class Ticket {
       el('div', { class: 'tk-sides' }, this.sellBtn, this.spreadEl, this.buyBtn),
       this.typeTabs, this.priceRow,
       el('label', { class: 'tk-row' }, el('span', {}, '数量'), this.qtyIn), this.qtyBtns, this.pctBtns,
-      el('div', { class: 'tk-br' }, el('label', { class: 'chk' }, this.tpChk, '利確'), this.tpIn, this.tpInfo),
+      this.reduceRow,
+      el('div', { class: 'tk-br' }, el('label', { class: 'chk' }, this.tpChk, '利確'), el('span', { class: 'tk-tpin' }, this.tpIn, this.tpPct), this.tpInfo),
+      this.tp2Row,
       el('div', { class: 'tk-br' }, el('label', { class: 'chk' }, this.slChk, '損切り'), this.slIn, this.slInfo),
       this.infoEl, this.submit, this.hint, this.posBox);
   }
@@ -354,15 +405,17 @@ export class Ticket {
     this.qtyIn.step = sym.qtyStep; this.qtyIn.min = sym.qtyStep;
     this.qtyIn.value = store.get('qty.' + sym.id, sym.qty);
     const st = 10 ** -sym.digits;
-    for (const i of [this.priceIn, this.slIn, this.tpIn]) i.step = st;
+    for (const i of [this.priceIn, this.slIn, this.tpIn, this.tp2In]) i.step = st;
     this.qtyBtns.innerHTML = '';
     const preset = sym.type === 'fx' ? [1000, 10000, 50000, 100000] : [sym.qty / 10, sym.qty, sym.qty * 5, sym.qty * 10];
     for (const q of preset) this.qtyBtns.append(el('button', { class: 'mini', onclick: () => { this.qtyIn.value = q; this.sync(true); } }, fmtNum(q, qtyDigits(sym))));
     this.qtyBtns.append(el('button', { class: 'mini', title: 'リスク計算: 損切りまでの損失が口座の 1% になる数量', onclick: () => this.riskQty() }, 'リスク1%'));
-    this.useSL = this.useTP = false; this.slChk.checked = this.tpChk.checked = false;
+    this.useSL = this.useTP = this.useTP2 = false; this.slChk.checked = this.tpChk.checked = this.tp2Chk.checked = false;
     this.sync();
   }
   qty() { return Math.max(0, +this.qtyIn.value || 0); }
+  tpPctV() { return +this.tpPct.value || 100; }
+  reduceOnly() { return this.type !== 'market' && this.reduceChk.checked; }
   entryPx() {
     const a = this.app, bid = a.price();
     if (this.type !== 'market') return +this.priceIn.value;
@@ -383,6 +436,11 @@ export class Ticket {
     }
     if (k === 'sl' && this.useSL && !this.slIn.value) this.slIn.value = this.fmtP(e + dir * dist);
     if (k === 'tp' && this.useTP && !this.tpIn.value) this.tpIn.value = this.fmtP(e + dir * dist);
+    if (k === 'tp2' && this.useTP2 && !this.tp2In.value) {
+      // 利確2 は利確1 より先（なければ利確の既定位置の 1.5 倍）に置く
+      const t1 = +this.tpIn.value || e + dir * dist;
+      this.tp2In.value = this.fmtP(t1 + (t1 - e) * 0.5);
+    }
   }
   // 資金（有効証拠金）の p 割を証拠金に使う数量
   pctQty(p) {
@@ -417,19 +475,26 @@ export class Ticket {
     this.sellBtn.classList.toggle('on', this.side < 0); this.buyBtn.classList.toggle('on', this.side > 0);
     this.spreadEl.textContent = sym.pip ? fmtNum(a.spread() / sym.pip, 1) : a.spread() ? fmtNum(a.spread(), sym.digits) : '0';
     this.priceRow.hidden = this.type === 'market';
-    this.slIn.disabled = !this.useSL; this.tpIn.disabled = !this.useTP;
+    this.slIn.disabled = !this.useSL; this.tpIn.disabled = !this.useTP; this.tp2In.disabled = !this.useTP2;
+    const ro = this.reduceOnly();
+    this.reduceRow.hidden = this.type === 'market';
+    this.tpPct.disabled = !this.useTP;
+    this.tp2Row.hidden = ro || !this.useTP || this.tpPctV() >= 100;
+    for (const c of [this.slChk, this.tpChk]) c.disabled = ro;
     const e = this.entryPx(), q = this.qty();
     const amt = (p) => (p - e) * q * this.side;
     const dist = (p) => (sym.pip ? `${fmtNum(Math.abs(p - e) / sym.pip, 1)} pips` : `${fmtNum((Math.abs(p - e) / e) * 100, 2)}%`);
     this.slInfo.textContent = this.useSL && e && this.slIn.value ? `${smoney(amt(+this.slIn.value), sym)} ${sym.quote}（${dist(+this.slIn.value)}）` : '';
-    this.tpInfo.textContent = this.useTP && e && this.tpIn.value ? `${smoney(amt(+this.tpIn.value), sym)} ${sym.quote}（${dist(+this.tpIn.value)}）` : '';
+    const f1 = this.tpPctV() / 100;
+    this.tpInfo.textContent = this.useTP && e && this.tpIn.value ? `${smoney(amt(+this.tpIn.value) * f1, sym)} ${sym.quote}（${dist(+this.tpIn.value)}${f1 < 1 ? '・' + this.tpPctV() + '%' : ''}）` : '';
+    this.tp2Info.textContent = this.useTP2 && e && this.tp2In.value ? `${smoney(amt(+this.tp2In.value) * (1 - f1), sym)} ${sym.quote}（${dist(+this.tp2In.value)}・残り ${100 - this.tpPctV()}%）` : '';
     const acc = a.accounts().manual;
     const lev = acc?.cfg.leverage ?? a.accountCfg().leverage;
     this.infoEl.innerHTML = e ? `<div><span>取引金額</span><b>${money(e * q, sym)} ${sym.quote}</b></div><div><span>必要証拠金</span><b>${money((e * q) / lev, sym)} ${sym.quote}</b></div>${sym.pip ? `<div><span>1pips あたり</span><b>${money(sym.pip * q, sym)} ${sym.quote}</b></div>` : ''}<div><span>レバレッジ</span><b>${lev} 倍</b></div><div><span>資金に対する証拠金</span><b>${fmtNum(((e * q) / lev / (acc ? acc.equity() : a.accountCfg().balance)) * 100, 1)}%</b></div>` : '';
     const tname = { market: '成行', limit: '指値', stop: '逆指値' }[this.type];
     this.submit.className = 'tk-submit ' + (this.side > 0 ? 'buy' : 'sell');
     this.submit.disabled = !on;
-    this.submit.innerHTML = `${this.side > 0 ? '買い' : '売り'} ${fmtNum(q, qtyDigits(sym))} ${sym.id} <small>${this.type === 'market' ? '@ 成行' : tname + ' @ ' + this.priceIn.value}</small>`;
+    this.submit.innerHTML = `${ro ? '決済' : ''}${this.side > 0 ? '買い' : '売り'} ${fmtNum(q, qtyDigits(sym))} ${sym.id} <small>${this.type === 'market' ? '@ 成行' : tname + ' @ ' + this.priceIn.value}</small>`;
     this.hint.textContent = on ? 'Shift+B / Shift+S で成行の買い・売り。チャート上のラインはドラッグで変更できます' : '上の「リプレイ」で開始位置を選ぶと取引できます';
     this.renderPos();
   }
@@ -445,14 +510,25 @@ export class Ticket {
     const q = this.qty();
     const sym = this.app.sym;
     if (!(q > 0)) { toast('数量を入れてください', 'err'); return; }
-    const sl = this.useSL && this.slIn.value ? +this.slIn.value : null;
-    const tp = this.useTP && this.tpIn.value ? +this.tpIn.value : null;
+    const ro = this.reduceOnly();
+    const sl = !ro && this.useSL && this.slIn.value ? +this.slIn.value : null;
+    let tp = !ro && this.useTP && this.tpIn.value ? +this.tpIn.value : null;
+    const tp2 = tp != null && this.useTP2 && this.tp2In.value ? +this.tp2In.value : null;
     const e = this.entryPx();
     if (sl != null && (sl - e) * this.side >= 0) { toast('損切り価格が逆です（買いなら建値より下）', 'err'); return; }
     if (tp != null && (tp - e) * this.side <= 0) { toast('利確価格が逆です（買いなら建値より上）', 'err'); return; }
-    const ok = this.type === 'market' ? this.app.marketOrder(this.side, q, { sl, tp }) : this.app.pendingOrder({ side: this.side, type: this.type, price: clamp(+this.priceIn.value, 0, Infinity), qty: q, sl, tp });
+    if (tp2 != null && (tp2 - e) * this.side <= 0) { toast('利確2 の価格が逆です（買いなら建値より上）', 'err'); return; }
+    // 分割利確は決済専用の指値として置く（100% のときは従来どおりポジションの利確）
+    let tps = null;
+    if (tp != null && this.tpPctV() < 100) {
+      tps = [{ price: tp, pct: this.tpPctV() }];
+      if (tp2 != null) tps.push({ price: tp2, pct: 100 - this.tpPctV() });
+      tp = null;
+    }
+    const ok = this.type === 'market' ? this.app.marketOrder(this.side, q, { sl, tp, tps })
+      : this.app.pendingOrder({ side: this.side, type: this.type, price: clamp(+this.priceIn.value, 0, Infinity), qty: q, sl, tp, tps, reduceOnly: ro, label: ro ? (this.type === 'limit' ? '利確' : '損切り') : '' });
     // 発注できたら予定ラインは片付ける（次の注文でまた有効にする）
-    if (ok) { this.toggleBracket('sl', false); this.toggleBracket('tp', false); }
+    if (ok) { this.toggleBracket('sl', false); this.toggleBracket('tp', false); this.toggleBracket('tp2', false); }
     void sym;
   }
   setSide(side) {
@@ -460,11 +536,13 @@ export class Ticket {
     this.side = side;
     // 売買を切り替えたら、損切り・利確を新しい向きの初期位置に置き直す
     for (const k of ['sl', 'tp']) if (k === 'sl' ? this.useSL : this.useTP) { (k === 'sl' ? this.slIn : this.tpIn).value = ''; this.defaultBracket(k); }
+    if (this.useTP2) { this.tp2In.value = ''; this.defaultBracket('tp2'); }
     this.sync();
   }
   toggleBracket(k, on) {
     if (k === 'sl') { this.useSL = on; this.slChk.checked = on; if (!on) this.slIn.value = ''; }
-    else if (k === 'tp') { this.useTP = on; this.tpChk.checked = on; if (!on) this.tpIn.value = ''; }
+    else if (k === 'tp') { this.useTP = on; this.tpChk.checked = on; if (!on) { this.tpIn.value = ''; if (this.useTP2) this.toggleBracket('tp2', false); } }
+    else if (k === 'tp2') { this.useTP2 = on; this.tp2Chk.checked = on; if (!on) this.tp2In.value = ''; }
     if (on) this.defaultBracket(k);
     this.sync();
   }
@@ -474,6 +552,7 @@ export class Ticket {
     const v = this.fmtP(price);
     if (k === 'sl') this.slIn.value = v;
     else if (k === 'tp') this.tpIn.value = v;
+    else if (k === 'tp2') this.tp2In.value = v;
     else if (k === 'entry') this.priceIn.value = v;
     this.sync(true);
   }
@@ -487,7 +566,10 @@ export class Ticket {
     const amt = (p) => smoney((p - e) * q * this.side, sym);
     const tn = { limit: '指値', stop: '逆指値' }[this.type];
     if (tn) out.push({ k: 'entry', price: e, color: this.side > 0 ? '#2962ff' : '#f23645', text: `${this.side > 0 ? '買い' : '売り'}${tn}（予定）${fmtNum(q, qtyDigits(sym))}` });
-    if (this.useTP && this.tpIn.value) { const p = +this.tpIn.value; out.push({ k: 'tp', price: p, color: '#089981', text: `利確（予定） ${amt(p)}・${dist(p)}` }); }
+    const f1 = this.tpPctV() / 100, part = this.useTP && f1 < 1;
+    const amtF = (p, f) => smoney((p - e) * q * f * this.side, sym);
+    if (this.useTP && this.tpIn.value) { const p = +this.tpIn.value; out.push({ k: 'tp', price: p, color: '#089981', text: `利確${part ? '1' : ''}（予定${part ? '・' + this.tpPctV() + '%' : ''}） ${part ? amtF(p, f1) : amt(p)}・${dist(p)}` }); }
+    if (part && this.useTP2 && this.tp2In.value) { const p = +this.tp2In.value; out.push({ k: 'tp2', price: p, color: '#089981', text: `利確2（予定・${100 - this.tpPctV()}%） ${amtF(p, 1 - f1)}・${dist(p)}` }); }
     if (this.useSL && this.slIn.value) { const p = +this.slIn.value; out.push({ k: 'sl', price: p, color: '#f23645', text: `損切り（予定） ${amt(p)}・${dist(p)}` }); }
     return out;
   }

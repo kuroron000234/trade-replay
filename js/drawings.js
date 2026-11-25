@@ -429,10 +429,17 @@ export class Overlay extends Emitter {
       if (p.qty) {
         const pnl = acc.unrealized();
         out.push({ kind: 'pos', acc, own, price: p.avg, color: own ? (p.qty > 0 ? C.blue : C.dn) : '#26c6da', text: `${own ? '' : '◆ '}${p.qty > 0 ? '買' : '売'} ${fmtNum(Math.abs(p.qty), qtyDigits(acc.sym))}`, pnl, close: own, drag: own });
-        if (p.sl != null) out.push({ kind: 'sl', acc, own, price: p.sl, color: C.dn, text: `損切 ${fmtSigned((p.sl - p.avg) * p.qty, 2)}`, close: own, drag: own });
+        if (p.sl != null) out.push({ kind: 'sl', acc, own, price: p.sl, color: C.dn, text: `${p.trail ? 'トレール' : '損切'} ${fmtSigned((p.sl - p.avg) * p.qty, 2)}`, close: own, drag: own });
         if (p.tp != null) out.push({ kind: 'tp', acc, own, price: p.tp, color: C.up, text: `利確 ${fmtSigned((p.tp - p.avg) * p.qty, 2)}`, close: own, drag: own });
       }
-      for (const o of acc.orders) out.push({ kind: 'order', acc, own, order: o, price: o.price, color: o.side > 0 ? C.blue : C.dn, dash: true, text: `${own ? '' : '◆ '}${o.side > 0 ? '買' : '売'}${o.type === 'limit' ? '指値' : '逆指値'} ${fmtNum(o.qty, qtyDigits(acc.sym))}`, close: own, drag: own });
+      for (const o of acc.orders) {
+        if (o.reduceOnly && p.qty) {
+          // 一部決済の注文: 利確は緑・損切りは赤で、約定したときの損益も出す
+          const q = Math.min(o.qty, Math.abs(p.qty)), pct = Math.round((q / Math.abs(p.qty)) * 100);
+          out.push({ kind: 'order', acc, own, order: o, price: o.price, color: o.type === 'limit' ? C.up : C.dn, dash: true,
+            text: `${own ? '' : '◆ '}${o.type === 'limit' ? '利確' : '損切'} ${pct}% ${fmtSigned((o.price - p.avg) * q * Math.sign(p.qty), 2)}`, close: own, drag: own });
+        } else out.push({ kind: 'order', acc, own, order: o, price: o.price, color: o.side > 0 ? C.blue : C.dn, dash: true, text: `${own ? '' : '◆ '}${o.side > 0 ? '買' : '売'}${o.type === 'limit' ? '指値' : '逆指値'} ${fmtNum(o.qty, qtyDigits(acc.sym))}${o.tps ? ' 利確' + o.tps.length + '段' : ''}`, close: own, drag: own });
+      }
     };
     add(manual, true);
     // 注文パネルで利確・損切りを有効にしているときの「予定」ライン（ドラッグで価格を決める）

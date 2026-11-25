@@ -166,6 +166,11 @@ input.inline { width: 100px; padding: 1px 4px; }
 .tk-br { display: grid; grid-template-columns: 80px 1fr; gap: 2px 8px; align-items: center; margin: 6px 0; }
 .tk-br .tk-in { width: 100%; }
 .tk-br .tk-in:disabled { opacity: .4; }
+.tk-tpin { display: flex; gap: 4px; min-width: 0; }
+.tk-tpin .tk-in { flex: 1; min-width: 0; }
+.tk-tppct { width: 62px; flex: none; }
+.tk-reduce { display: flex; gap: 6px; align-items: center; margin: 6px 0; font-size: 12px; }
+.close-dlg { display: flex; flex-direction: column; gap: 8px; }
 .tk-info { grid-column: 2; text-align: right; font-size: 11px; }
 .tk-sum { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; font-size: 12px; }
 .tk-sum div { display: flex; justify-content: space-between; padding: 2px 0; } .tk-sum span { color: var(--sub); }

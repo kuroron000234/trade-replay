@@ -3,7 +3,7 @@ import { $, el, store, toast, fmtTime, fmtNum, TFS, tfInfo, alignTF, DAY, parseD
 import { SYMBOLS, symbolInfo, dayOffset, sourceFor, fxManifest } from './data.js';
 import { Replay, SPEEDS } from './replay.js';
 import { ChartView, CHART_TYPES } from './chart.js';
-import { Overlay, TOOLS } from './drawings.js';
+import { Overlay, TOOLS, qtyDigits } from './drawings.js';
 import { Account } from './broker.js';
 import { INDICATORS } from './indicators.js';
 import { compile, StrategyRunner, Backtest, PRESETS } from './strategy.js';
@@ -372,8 +372,8 @@ class App {
   // ---------- 売買 ----------
   marketOrder(side, qty, br = {}) {
     if (!this.canTrade()) { toast('リプレイ中のみ取引できます', 'err'); return; }
-    this.recorder.op('order_market', { side, qty, sl: br.sl ?? null, tp: br.tp ?? null });
-    const err = this.manual.market(side, qty, { sl: br.sl, tp: br.tp, reason: side > 0 ? '成行買い' : '成行売り' });
+    this.recorder.op('order_market', { side, qty, sl: br.sl ?? null, tp: br.tp ?? null, tps: br.tps ?? null });
+    const err = this.manual.market(side, qty, { sl: br.sl, tp: br.tp, tps: br.tps, reason: side > 0 ? '成行買い' : '成行売り' });
     if (err) toast(err, 'err');
     return !err;
   }
@@ -383,8 +383,10 @@ class App {
     const px = o.side > 0 ? ask : bid;
     if (o.type === 'limit' && (o.side > 0 ? o.price >= px : o.price <= px)) { toast('指値が現在値より不利です。成行か逆指値を使ってください', 'err'); return false; }
     if (o.type === 'stop' && (o.side > 0 ? o.price <= px : o.price >= px)) { toast('逆指値が現在値より有利です。成行か指値を使ってください', 'err'); return false; }
-    this.manual.placeOrder(o);
-    toast(`${o.side > 0 ? '買い' : '売り'}${o.type === 'limit' ? '指値' : '逆指値'} を ${fmtNum(o.price, this.sym.digits)} に置きました`);
+    const p = this.manual.pos;
+    if (o.reduceOnly && (!p.qty || Math.sign(p.qty) === o.side)) { toast(`決済注文は${o.side > 0 ? '売り' : '買い'}ポジションがあるときだけ置けます`, 'err'); return false; }
+    if (!this.manual.placeOrder(o)) return false;
+    toast(`${o.reduceOnly ? '決済' : o.side > 0 ? '買い' : '売り'}${o.type === 'limit' ? '指値' : '逆指値'} ${fmtNum(o.qty, qtyDigits(this.sym))} を ${fmtNum(o.price, this.sym.digits)} に置きました`);
     return true;
   }
   closePosition(frac = 1) {
@@ -393,6 +395,24 @@ class App {
     const q = frac >= 1 ? Math.abs(a.pos.qty) : Math.max(step, Math.round((Math.abs(a.pos.qty) * frac) / step) * step);
     this.recorder.op('close', { qty: q, of: Math.abs(a.pos.qty) });
     a.closePosition('手動決済', q);
+  }
+  // 一部（または全部）を指値・逆指値で決済する注文（取引所の「決済のみ」と同じ）
+  closeOrder(type, price, frac = 1, qty) {
+    const a = this.manual; if (!a?.pos.qty) { toast('ポジションがありません', 'err'); return false; }
+    const step = this.sym.qtyStep, all = Math.abs(a.pos.qty);
+    const q = qty ?? (frac >= 1 ? all : Math.max(step, Math.round((all * frac) / step) * step));
+    const pct = Math.round((q / all) * 100);
+    return this.pendingOrder({ side: -Math.sign(a.pos.qty), type, price: +price.toFixed(this.sym.digits), qty: Math.min(q, all), reduceOnly: true, label: (type === 'limit' ? '利確' : '損切り') + (pct < 100 ? ` ${pct}%` : '') });
+  }
+  // 損切りを建値（手数料込みでほぼ損益ゼロ）に移す
+  breakeven() {
+    const a = this.manual, p = a?.pos; if (!p?.qty) return;
+    const long = p.qty > 0, fee = p.avg * a.cfg.fee * 2;
+    const be = +(p.avg + (long ? fee : -fee)).toFixed(this.sym.digits);
+    const cur = long ? a.bid : a.ask;
+    if (long ? be >= cur : be <= cur) { toast('まだ含み益が無いので、建値には損切りを置けません', 'err'); return; }
+    a.setBrackets(be, undefined);
+    toast(`損切りを建値 ${fmtNum(be, this.sym.digits)} に移しました`);
   }
   closeAllManual() { this.recorder.op('close_all', {}); this.manual?.closeAll('全決済'); }
   reverse() {
@@ -440,6 +460,14 @@ class App {
         const bid = this.price(), q = this.ticket.qty();
         if (price < bid) items.push({ label: `買い指値 ${ps}`, onclick: () => this.pendingOrder({ side: 1, type: 'limit', price, qty: q }) }, { label: `売り逆指値 ${ps}`, onclick: () => this.pendingOrder({ side: -1, type: 'stop', price, qty: q }) });
         else items.push({ label: `売り指値 ${ps}`, onclick: () => this.pendingOrder({ side: -1, type: 'limit', price, qty: q }) }, { label: `買い逆指値 ${ps}`, onclick: () => this.pendingOrder({ side: 1, type: 'stop', price, qty: q }) });
+        const pos = this.manual?.pos;
+        if (pos?.qty) {
+          // ポジションがあれば、その価格での一部決済（利益側なら指値＝利確、損失側なら逆指値＝損切り）
+          const cur = pos.qty > 0 ? bid : bid + this.spread();
+          const profit = (price - cur) * Math.sign(pos.qty) > 0, type = profit ? 'limit' : 'stop', w = profit ? '利確' : '損切り';
+          items.push('-', { header: `ポジションを ${ps} で${w}` },
+            ...[[0.5, '半分'], [1 / 3, '1/3'], [1, '全部']].map(([f, l]) => ({ label: `${l}を${w}`, onclick: () => this.closeOrder(type, price, f) })));
+        }
         items.push('-');
       } else if (t != null) items.push({ label: 'ここからリプレイを開始', icon: SVG.replay, onclick: () => this.startReplay(alignTF(t, this.tf, this.off()) + this.tf) }, '-');
       items.push({ label: `水平線を引く ${ps}`, onclick: () => this.ov.add({ id: Math.random().toString(36).slice(2), type: 'hline', pts: [{ t, p: price }], color: '#2962ff', width: 1 }) });

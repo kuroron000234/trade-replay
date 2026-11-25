@@ -202,7 +202,7 @@ export class Recorder {
       pips: sym.pip ? ((t.exit - t.entry) * t.dir) / sym.pip : null,
       movePct: ((t.exit / t.entry - 1) * 100) * t.dir,
       pnlPctEquity: t.openEquity ? (t.pnl / t.openEquity) * 100 : null,
-      exitReason: t.reason, entryReason: t.entryReason, posId: t.posId,
+      exitReason: t.reason, entryReason: t.entryReason, posId: t.posId, partial: !!t.partial,
       initSL: t.initSL ?? null, initTP: t.initTP ?? null, slAtExit: t.slAtExit ?? null, tpAtExit: t.tpAtExit ?? null,
       R: risk ? t.pnl / risk : null, mfe: t.mfe ?? 0, mae: t.mae ?? 0,
       mfeR: risk ? (t.mfe ?? 0) / risk : null, maeR: risk ? (t.mae ?? 0) / risk : null,
