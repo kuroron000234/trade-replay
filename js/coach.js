@@ -293,7 +293,7 @@ export class Coach {
     if (a.strat && a.bt) {
       f['backtest/code.js'] = a.strat.code;
       f['backtest/result.json'] = json({ name: a.strat.compiled?.name, inputs: a.strat.inputs, symbol: sym.id, timeframeMinutes: r.tf / 60, bars: a.bt.bars.length,
-        from: a.bt.bars[0] ? fmtISO(a.bt.bars[0].t) : null, to: a.bt.bars.length ? fmtISO(a.bt.bars[a.bt.bars.length - 1].t) : null, stats: a.bt.acc.stats(), error: a.strat.error || null });
+        from: a.bt.fromT != null ? fmtISO(a.bt.fromT) : a.bt.bars[0] ? fmtISO(a.bt.bars[0].t) : null, measuredFromSetting: a.bt.fromT != null, to: a.bt.bars.length ? fmtISO(a.bt.bars[a.bt.bars.length - 1].t) : null, stats: a.bt.acc.stats(), error: a.strat.error || null });
       f['backtest/trades.json'] = json(a.bt.acc.trades);
     }
     f['README.md'] = [
@@ -343,7 +343,7 @@ export class Coach {
     const s = bt.acc.stats(), sym = a.sym, tr = bt.acc.trades;
     const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     const lines = [
-      `## バックテスト結果: ${a.strat.compiled?.name}（${sym.id}・${a.replay.tf / 60}分足・確定足 ${bt.bars.length} 本、${bt.bars[0] ? fmtTime(bt.bars[0].t) : ''} 〜 ${bt.bars.length ? fmtTime(bt.bars[bt.bars.length - 1].t) : ''}）`,
+      `## バックテスト結果: ${a.strat.compiled?.name}（${sym.id}・${a.replay.tf / 60}分足・確定足 ${bt.bars.length} 本、${bt.fromT != null ? fmtTime(bt.fromT) + ' から計測' : (bt.bars[0] ? fmtTime(bt.bars[0].t) : '')} 〜 ${bt.bars.length ? fmtTime(bt.bars[bt.bars.length - 1].t) : ''}）`,
       `- 入力: ${JSON.stringify(a.strat.inputs)}`,
       `- 純利益 ${f2(s.net)} ${sym.quote}（${f2(s.netPct)}%）、取引 ${s.n}、勝率 ${f2(s.winRate)}%、PF ${f2(s.pf)}、最大DD ${f2(s.maxDD)}（${f2(s.maxDDpct)}%）、平均損益 ${f2(s.avg)}、平均利益 ${f2(s.avgWin)}、平均損失 ${f2(s.avgLoss)}、最大連敗 ${s.maxLossStreak}`,
       `- 買い: ${s.long.n} 件 勝率 ${f2(s.long.win)}% 損益 ${f2(s.long.net)} / 売り: ${s.short.n} 件 勝率 ${f2(s.short.win)}% 損益 ${f2(s.short.net)}`,

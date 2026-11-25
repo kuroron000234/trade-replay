@@ -180,11 +180,16 @@ export class TesterPanel {
       el('optgroup', { label: '自作' }, ...app.customStrategies().map((c) => el('option', { value: 'custom:' + c.id, selected: st?.key === 'custom:' + c.id }, nameOf(c.code)))));
     this.head.append(sel);
     if (st) {
-      this.head.append(
+      this.head.append(...[
         el('button', { class: 'btn small', onclick: () => app.editStrategyInputs() }, '⚙ 設定'),
         el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: app.showStratOnChart, onchange: (e) => app.setShowStrat(e.target.checked) }), 'チャートに表示'),
         el('button', { class: 'btn small ' + (app.autoOn ? 'on-auto' : ''), title: 'リプレイ中、ストラテジーが別口座で自動売買します（手動と比較できます）', onclick: () => app.toggleAuto() }, app.autoOn ? '◆ 自動売買 ON' : '◇ 自動売買 OFF'),
-        el('span', { class: 'muted' }, app.strat?.error ? '⚠ ' + app.strat.error : `期間: チャート上の確定足 ${app.bt?.bars.length ?? 0} 本`));
+        app.inReplay() ? el('select', { class: 'measure-sel', title: '「設定した時点から」は、ストラテジーを選んだ時点（またはリプレイの開始時点）以降の売買だけで成績を出します。それより前の足はインジケーターの計算にだけ使います',
+          onchange: (e) => app.setMeasure(e.target.value) },
+          el('option', { value: 'now', selected: app.btFrom !== 'all' }, '計測: 設定した時点から'),
+          el('option', { value: 'all', selected: app.btFrom === 'all' }, '計測: チャートの全期間')) : null,
+        app.inReplay() && app.btFrom !== 'all' ? el('button', { class: 'btn small', title: '成績をリセットして、今の時点から計測し直します', onclick: () => app.setMeasure('restart') }, '↺ 今から計測') : null,
+        el('span', { class: 'muted' }, app.strat?.error ? '⚠ ' + app.strat.error : app.bt?.fromT != null ? `${fmtTime(app.bt.fromT)} から計測` : `期間: チャート上の確定足 ${app.bt?.bars.length ?? 0} 本`)].filter(Boolean));
     }
   }
   render() {

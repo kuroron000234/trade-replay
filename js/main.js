@@ -42,6 +42,7 @@ class App {
     this.bt = null;
     this.strat = null;
     this.showStratOnChart = store.get('showStrat', true);
+    this.btFrom = store.get('btFrom', 'now'); // バックテストの計測: 'now' はリプレイ中に設定した時点から、'all' は全期間
     this.fillsKey = '';
     this.pickMode = false;
     this.recorder = new Recorder(this);
@@ -223,6 +224,7 @@ class App {
     }
     T0 = Math.floor(T0 / 60) * 60;
     if (!confirmed && this.manual?.trades.length && !this.pendingRestore && !confirm('新しいリプレイを始めると、今の口座はリセットされます。よろしいですか？')) return;
+    this.replayStartT = T0;
     try {
       await this.replay.start(T0, this.sym, this.tf);
       toast(`${fmtTime(T0)} からリプレイを開始しました。▶ または Shift+↓ で再生`);
@@ -279,6 +281,8 @@ class App {
     if (compiled) for (const [k, x] of Object.entries(compiled.inputs)) inputs[k] = x.value;
     Object.assign(inputs, store.get('stratInputs.' + key, {}));
     this.strat = { key, code, compiled, inputs, error };
+    // リプレイ中に選んだら、その時点から計測する（それまでの足は計算だけ）
+    this.stratStartT = this.inReplay() ? this.replay.T : null;
     this.resetRunners();
     this.tester.renderHead();
     this.tester.render();
@@ -336,11 +340,23 @@ class App {
     this.makeLiveRunner();
     this.runBacktest();
   }
+  // バックテストの計測開始時刻（null は全期間）
+  measureFrom() {
+    if (!this.inReplay() || this.btFrom === 'all') return null;
+    const start = this.replayStartT ?? this.replay.T;
+    return Math.max(start, this.stratStartT ?? start);
+  }
+  setMeasure(mode) {
+    if (mode === 'restart') { this.btFrom = 'now'; this.stratStartT = this.replay.T; }
+    else this.btFrom = mode;
+    store.set('btFrom', this.btFrom);
+    this.runBacktest();
+  }
   runBacktest() {
     this.bt = null;
     if (this.strat?.compiled) {
       const r = this.replay;
-      this.bt = new Backtest(this.strat.compiled, this.stratInputs(), this.sym, r.tf ?? this.tf, this.off(), this.accountCfg());
+      this.bt = new Backtest(this.strat.compiled, this.stratInputs(), this.sym, r.tf ?? this.tf, this.off(), this.accountCfg(), this.measureFrom());
       const n = r.mode === 'replay' ? r.countClosed() : r.bars.length;
       try { this.bt.run(r.bars.slice(0, n)); } catch (e) { this.strat.error = e.message; }
       this.strat.error = this.bt.runner.error || this.strat.error;

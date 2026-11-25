@@ -181,7 +181,9 @@ export class StrategyRunner {
 
 // 確定足 bars 全体で一括バックテスト。続きを追加できるよう runner と account を返す
 export class Backtest {
-  constructor(compiled, inputs, sym, tf, off, cfg) {
+  // fromT（UNIX 秒）を渡すと、その時刻より前に確定した足では売買しない（インジケーターの計算と描画だけ）
+  constructor(compiled, inputs, sym, tf, off, cfg, fromT = null) {
+    this.fromT = fromT;
     this.acc = new Account(sym, cfg, 'バックテスト');
     this.runner = new StrategyRunner(compiled, inputs, this.acc, sym, tf, off);
     this.tf = tf;
@@ -201,6 +203,13 @@ export class Backtest {
   }
   step(i) {
     const b = this.bars[i], acc = this.acc;
+    if (this.fromT != null && b.t + this.tf <= this.fromT) {
+      // 計測開始より前: 戦略は動かす（変数や描画のため）が、出た注文は捨てる
+      acc.bid = b.c; acc.t = b.t;
+      this.runner.onBar(i);
+      acc.queued = []; acc.orders = [];
+      return;
+    }
     const path = barPath(b);
     if (i > 0) acc.segment(this.bars[i - 1].c, b.o, b.t, true);
     else { acc.bid = b.o; acc.t = b.t; }
